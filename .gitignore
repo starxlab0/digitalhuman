@@ -1,0 +1,7 @@
+node_modules/
+generated-images/
+archive/
+scripts/
+*.log
+.env
+project.private.config.json
