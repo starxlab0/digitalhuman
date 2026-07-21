@@ -68,11 +68,18 @@ const VoiceManager = {
       const frames = this._audioFrames;
       this._audioFrames = null;
 
-      // 优先用 PCM 帧合成 WAV（手机端帧数据可靠，我们自建头保证 16kHz）
+      // 优先用 PCM 帧合成 WAV
       if (frames && frames.length > 0) {
-        this._doASRFromFrames(frames);
+        // 先检查 PCM 是否全静音
+        const isSilent = this._isPcmSilent(frames);
+        if (isSilent && res.tempFilePath) {
+          // PCM 全零 → 回退录制的文件（兼容部分安卓 PCM 帧兼容问题）
+          console.log('[Voice] PCM 全静音（' + frames.length + '帧），回退 tempFilePath:', res.tempFilePath);
+          this._doASRFromFile(res.tempFilePath, frames);
+        } else {
+          this._doASRFromFrames(frames);
+        }
       } else if (res.tempFilePath) {
-        // 帧为空时回退文件（开发者工具等极端情况）
         console.log('[Voice] 无帧数据，回退文件:', res.tempFilePath);
         this._doASRFromFile(res.tempFilePath, null);
       } else {
@@ -260,6 +267,22 @@ const VoiceManager = {
   },
 
   /**
+   * 检查 PCM 帧数据是否为全静音
+   */
+  _isPcmSilent(frames) {
+    // 抽查前 5000 个 sample（约 0.3 秒），如果全是 0 则判定静音
+    let checked = 0;
+    for (const frame of frames) {
+      const samples = new Int16Array(frame);
+      for (let i = 0; i < samples.length && checked < 5000; i++, checked++) {
+        if (samples[i] !== 0) return false; // 有一个非零值就不是静音
+      }
+      if (checked >= 5000) break;
+    }
+    return true;
+  },
+
+  /**
    * 从 PCM 帧合成 WAV 并发送
    */
   _doASRFromFrames(frames) {
@@ -269,16 +292,18 @@ const VoiceManager = {
     console.log('[Voice] PCM帧合成WAV, PCM大小:', (totalBytes / 1024).toFixed(1), 'KB, 帧数:', frames.length,
       '录制时长:', actualDuration + 's', '期望PCM:', (expectedBytes / 1024).toFixed(1), 'KB');
 
-    // 诊断：检查前几个sample是否有非零值（判断是否静音）
-    if (totalBytes >= 4) {
-      const samples = new Int16Array(frames[0].slice(0, Math.min(200, frames[0].byteLength)));
-      let nonZero = 0, maxVal = 0;
+    // 诊断：检查全部PCM是否有非零值（判断是否静音）
+    let nonZero = 0, maxVal = 0, totalSamples = 0;
+    for (const frame of frames) {
+      const samples = new Int16Array(frame);
       for (let i = 0; i < samples.length; i++) {
         if (samples[i] !== 0) nonZero++;
         maxVal = Math.max(maxVal, Math.abs(samples[i]));
       }
-      console.log('[Voice] 首帧诊断: 非零samples=' + nonZero + '/' + samples.length + ' 最大振幅=' + maxVal);
+      totalSamples += samples.length;
     }
+    console.log('[Voice] PCM全量诊断: 非零samples=' + nonZero + '/' + totalSamples + ' 最大振幅=' + maxVal +
+      ' 帧均能量=' + (totalSamples ? (maxVal / totalSamples).toFixed(2) : '0'));
 
     const wavBase64 = this._framesToWavBase64(frames);
     console.log('[Voice] WAV base64:', (wavBase64.length / 1024).toFixed(1), 'KB');
