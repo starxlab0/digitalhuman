@@ -125,6 +125,8 @@ module.exports = async function asrHandler(req, res) {
 
       if (azureResp.RecognitionStatus === 'NoMatch') {
         response.detail = { status: 'NoMatch', messages: azureResp.NBest || [] };
+      } else if (azureResp.RecognitionStatus === 'Success' && !azureResp.DisplayText) {
+        response.detail = { status: 'Silent', hint: '音量可能太低，请大声一点或靠近麦克风' };
       } else if (azureResp.error) {
         response.error = 'Azure错误: ' + (azureResp.error.message || JSON.stringify(azureResp.error));
       } else if (!response.text && azureResp.RecognitionStatus !== 'Success') {

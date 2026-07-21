@@ -113,12 +113,44 @@ const VoiceManager = {
       offset += frames[i].byteLength;
     }
 
+    // 自动增益：音量太小的话放大，提高识别率
+    const normalized = this._normalizeAudio(pcmBuf.buffer);
+
     // 生成 WAV 文件头 + PCM 数据
-    const wav = this._buildWav(pcmBuf.buffer,
+    const wav = this._buildWav(normalized,
       CONFIG.sampleRate, CONFIG.numberOfChannels, 16);
 
     // 转 base64 (分批处理避免栈溢出)
     return this._arrayBufferToBase64(wav);
+  },
+
+  /**
+   * 自动增益：如果音量太低就放大，提高 ASR 识别率
+   * @param {ArrayBuffer} pcmBuffer - 16-bit mono PCM
+   * @returns {ArrayBuffer} 增益后的 PCM
+   */
+  _normalizeAudio(pcmBuffer) {
+    const samples = new Int16Array(pcmBuffer);
+    let maxAbs = 0;
+    for (let i = 0; i < samples.length; i++) {
+      maxAbs = Math.max(maxAbs, Math.abs(samples[i]));
+    }
+
+    // 振幅低于 25% 满幅 → 放大到 70% 左右
+    const TARGET = 22937; // 70% of 32767
+    const MIN = 8191;     // 25% threshold
+
+    if (maxAbs < MIN && maxAbs > 0) {
+      const gain = Math.min(TARGET / maxAbs, 4.0); // 最多放大4倍避免失真
+      console.log('[Voice] 自动增益: max=' + maxAbs + ' gain=' + gain.toFixed(1) + 'x');
+      const result = new Int16Array(samples.length);
+      for (let i = 0; i < samples.length; i++) {
+        const v = Math.round(samples[i] * gain);
+        result[i] = Math.max(-32768, Math.min(32767, v));
+      }
+      return result.buffer;
+    }
+    return pcmBuffer;
   },
 
   /**
