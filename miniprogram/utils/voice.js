@@ -15,7 +15,7 @@ const CONFIG = {
 
   // ---- Vercel 部署地址 ----
   // 部署后改为: https://your-project.vercel.app
-  proxyBase: 'https://backend-umber-ten-62.vercel.app',
+  proxyBase: 'https://backend-8fs1o5l3t-starxlab0s-projects.vercel.app',
 
   // 音频参数 (必须与录制一致)
   sampleRate: 16000,
