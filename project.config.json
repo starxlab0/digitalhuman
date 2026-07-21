@@ -18,7 +18,12 @@
   "miniprogramRoot": "miniprogram/",
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": ["backend/", "archive/", "generated-images/", "scripts/"],
+    "ignore": [
+      { "type": "folder", "value": "backend" },
+      { "type": "folder", "value": "archive" },
+      { "type": "folder", "value": "generated-images" },
+      { "type": "folder", "value": "scripts" }
+    ],
     "include": []
   },
   "appid": "wx9f6774fbdbe0fd8d",
