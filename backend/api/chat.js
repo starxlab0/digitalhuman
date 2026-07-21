@@ -5,13 +5,25 @@ const https = require('https');
 
 function httpPost(hostname, path, headers, body) {
   return new Promise((resolve, reject) => {
-    const opts = { hostname, path, method: 'POST', headers, timeout: 30000 };
+    const opts = {
+      hostname, path, method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: 30000,
+    };
     const req = https.request(opts, (res) => {
+      res.setEncoding('utf8');
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
-        try { resolve({ statusCode: res.statusCode, data: JSON.parse(data) }); }
-        catch { resolve({ statusCode: res.statusCode, data }); }
+        try {
+          resolve({ statusCode: res.statusCode, data: JSON.parse(data) });
+        } catch (e) {
+          console.error('[Chat] DeepSeek 返回非 JSON:', res.statusCode, data.slice(0, 500));
+          resolve({ statusCode: res.statusCode, data, parseError: e.message });
+        }
       });
     });
     req.on('error', reject);
@@ -108,10 +120,15 @@ module.exports = async function chatHandler(req, res) {
         console.error('[Chat] DeepSeek 错误:', JSON.stringify(result.data));
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({
-          reply: '',
-          error: 'LLM返回异常: ' + JSON.stringify(result.data)
-        }));
+        let errorMsg = 'LLM返回异常';
+        if (typeof result.data === 'string') {
+          errorMsg = 'LLM返回异常: ' + result.data.slice(0, 100);
+        } else if (result.data && result.data.error && result.data.error.message) {
+          errorMsg = 'LLM错误: ' + result.data.error.message;
+        } else if (result.parseError) {
+          errorMsg = 'LLM响应解析失败: ' + result.parseError;
+        }
+        res.end(JSON.stringify({ reply: '', error: errorMsg }));
       }
     } catch (e) {
       console.error('[Chat] 异常:', e.message);
