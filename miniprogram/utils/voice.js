@@ -55,8 +55,8 @@ const VoiceManager = {
     });
 
     this._recorder.onFrameRecorded((res) => {
-      // 收集 PCM 帧数据（在开发者工具和真机上都可用）
-      if (this._audioFrames) {
+      // 收集 PCM 帧数据（微信有时 frameBuffer 为 undefined）
+      if (this._audioFrames && res.frameBuffer) {
         this._audioFrames.push(res.frameBuffer);
       }
     });
@@ -273,6 +273,7 @@ const VoiceManager = {
     // 抽查前 5000 个 sample（约 0.3 秒），如果全是 0 则判定静音
     let checked = 0;
     for (const frame of frames) {
+      if (!frame) continue;
       const samples = new Int16Array(frame);
       for (let i = 0; i < samples.length && checked < 5000; i++, checked++) {
         if (samples[i] !== 0) return false; // 有一个非零值就不是静音
@@ -286,6 +287,14 @@ const VoiceManager = {
    * 从 PCM 帧合成 WAV 并发送
    */
   _doASRFromFrames(frames) {
+    // 过滤无效帧（微信偶尔返回 undefined）
+    frames = frames.filter(f => f);
+    if (frames.length === 0) {
+      console.warn('[Voice] 所有帧无效，无音频数据');
+      if (this._onResult) this._onResult('');
+      return;
+    }
+
     const totalBytes = frames.reduce((s, f) => s + f.byteLength, 0);
     const actualDuration = this._recordStartTime ? ((Date.now() - this._recordStartTime) / 1000).toFixed(1) : '?';
     const expectedBytes = CONFIG.sampleRate * 2 * actualDuration; // 16kHz * 16bit * 秒数
@@ -295,6 +304,7 @@ const VoiceManager = {
     // 诊断：检查全部PCM是否有非零值（判断是否静音）
     let nonZero = 0, maxVal = 0, totalSamples = 0;
     for (const frame of frames) {
+      if (!frame) continue;
       const samples = new Int16Array(frame);
       for (let i = 0; i < samples.length; i++) {
         if (samples[i] !== 0) nonZero++;
