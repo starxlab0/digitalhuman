@@ -199,8 +199,8 @@ const VoiceManager = {
         }
       },
       fail: (err) => {
-        console.warn('[Voice] ASR 请求失败:', err);
-        if (this._onResult) this._onResult('', { requestFail: true, errMsg: String(err) });
+        console.error('[Voice] ASR 请求失败:', JSON.stringify(err));
+        if (this._onResult) this._onResult('', { requestFail: true, errMsg: JSON.stringify(err) });
       },
     });
   },

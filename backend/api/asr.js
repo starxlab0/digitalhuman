@@ -57,6 +57,8 @@ function httpPost(hostname, path, headers, body) {
 // ===================== 主处理 =====================
 
 module.exports = async function asrHandler(req, res) {
+  console.log('[ASR] 收到请求:', req.method, 'URL:', req.url);
+
   if (req.method !== 'POST') {
     res.statusCode = 405;
     res.setHeader('Content-Type', 'application/json');
