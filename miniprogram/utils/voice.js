@@ -67,12 +67,13 @@ const VoiceManager = {
       const frames = this._audioFrames;
       this._audioFrames = null;
 
-      // 双通道策略：先试读文件，失败则用 PCM 帧
-      if (res.tempFilePath) {
-        console.log('[Voice] 录制文件:', res.tempFilePath, '时长:', res.duration || '?', 'ms');
-        this._doASRFromFile(res.tempFilePath, frames);
-      } else if (frames && frames.length > 0) {
+      // 优先用 PCM 帧合成 WAV（手机端帧数据可靠，我们自建头保证 16kHz）
+      if (frames && frames.length > 0) {
         this._doASRFromFrames(frames);
+      } else if (res.tempFilePath) {
+        // 帧为空时回退文件（开发者工具等极端情况）
+        console.log('[Voice] 无帧数据，回退文件:', res.tempFilePath);
+        this._doASRFromFile(res.tempFilePath, null);
       } else {
         console.warn('[Voice] 无音频数据');
         if (this._onResult) this._onResult('');
@@ -376,8 +377,8 @@ const VoiceManager = {
           duration: 5000,       // 5秒录音
           sampleRate: CONFIG.sampleRate,
           numberOfChannels: CONFIG.numberOfChannels,
-          format: 'wav',        // WAV 格式，录制文件直接兼容 Azure Speech
-          frameSize: 10,        // 每帧10KB（仍收集帧做备用）
+          format: 'PCM',        // PCM帧数据，自建WAV头保证16kHz兼容性
+          frameSize: 10,        // 每帧10KB
         });
       },
       fail: () => {
