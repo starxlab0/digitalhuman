@@ -64,21 +64,19 @@ const VoiceManager = {
       this._recording = false;
       if (this._onEnd) this._onEnd();
 
-      // 优先使用录制文件（开发者工具和真机都能产出正确格式的音频文件）
+      const frames = this._audioFrames;
+      this._audioFrames = null;
+
+      // 双通道策略：先试读文件，失败则用 PCM 帧
       if (res.tempFilePath) {
-        console.log('[Voice] 录制文件路径:', res.tempFilePath, '时长:', res.duration || '?', 'ms');
-        this._doASRFromFile(res.tempFilePath);
-      } else if (this._audioFrames && this._audioFrames.length > 0) {
-        const totalPcmBytes = this._audioFrames.reduce((s, f) => s + f.byteLength, 0);
-        console.log('[Voice] 无录制文件，用PCM帧合成WAV, PCM原始大小:', (totalPcmBytes / 1024).toFixed(1), 'KB');
-        const wavBase64 = this._framesToWavBase64(this._audioFrames);
-        console.log('[Voice] WAV base64大小:', (wavBase64.length / 1024).toFixed(1), 'KB');
-        this._sendASR(wavBase64);
+        console.log('[Voice] 录制文件:', res.tempFilePath, '时长:', res.duration || '?', 'ms');
+        this._doASRFromFile(res.tempFilePath, frames);
+      } else if (frames && frames.length > 0) {
+        this._doASRFromFrames(frames);
       } else {
-        console.warn('[Voice] 无音频数据 (无文件且无帧)');
+        console.warn('[Voice] 无音频数据');
         if (this._onResult) this._onResult('');
       }
-      this._audioFrames = null;
     });
 
     this._recorder.onError((err) => {
@@ -208,22 +206,67 @@ const VoiceManager = {
   },
 
   /**
-   * 回退方案: 从文件读取音频 (真机专用)
+   * 从录制文件读取音频，失败则回退到 PCM 帧
    */
-  _doASRFromFile(filePath) {
+  _doASRFromFile(filePath, fallbackFrames) {
+    const isHttp = typeof filePath === 'string' && filePath.startsWith('http');
+
+    if (isHttp) {
+      // DevTools 返回 http://tmp/... URL，用 wx.request 下载
+      console.log('[Voice] 通过 HTTP 下载录制文件...');
+      wx.request({
+        url: filePath,
+        responseType: 'arraybuffer',
+        success: (res) => {
+          if (res.statusCode === 200 && res.data) {
+            const base64 = wx.arrayBufferToBase64(res.data);
+            console.log('[Voice] HTTP下载成功, base64大小:', (base64.length / 1024).toFixed(1), 'KB');
+            this._sendASR(base64);
+          } else {
+            console.warn('[Voice] HTTP下载失败 status:', res.statusCode, '→ 回退 PCM 帧');
+            this._tryFallbackFrames(fallbackFrames);
+          }
+        },
+        fail: (err) => {
+          console.warn('[Voice] HTTP下载失败:', err.errMsg, '→ 回退 PCM 帧');
+          this._tryFallbackFrames(fallbackFrames);
+        },
+      });
+      return;
+    }
+
     const fs = wx.getFileSystemManager();
     fs.readFile({
       filePath,
       encoding: 'base64',
       success: (readRes) => {
-        console.log('[Voice] 音频文件大小:', (readRes.data.length / 1024).toFixed(1), 'KB (base64)');
+        console.log('[Voice] 文件读取成功, base64大小:', (readRes.data.length / 1024).toFixed(1), 'KB');
         this._sendASR(readRes.data);
       },
       fail: (err) => {
-        console.error('[Voice] 读取音频文件失败:', err);
-        if (this._onResult) this._onResult('');
+        console.warn('[Voice] readFile 失败:', err.errMsg, '→ 回退到 PCM 帧');
+        this._tryFallbackFrames(fallbackFrames);
       },
     });
+  },
+
+  _tryFallbackFrames(frames) {
+    if (frames && frames.length > 0) {
+      this._doASRFromFrames(frames);
+    } else {
+      if (this._onResult) this._onResult('');
+    }
+  },
+
+  /**
+   * 从 PCM 帧合成 WAV 并发送
+   */
+  _doASRFromFrames(frames) {
+    const totalBytes = frames.reduce((s, f) => s + f.byteLength, 0);
+    console.log('[Voice] PCM帧合成WAV, PCM大小:', (totalBytes / 1024).toFixed(1), 'KB, 帧数:', frames.length);
+    const wavBase64 = this._framesToWavBase64(frames);
+    console.log('[Voice] WAV base64:', (wavBase64.length / 1024).toFixed(1), 'KB');
+    this._sendASR(wavBase64);
   },
 
   // ===================== TTS: Vercel → 讯飞 REST TTS → base64 → 播放 =====================
