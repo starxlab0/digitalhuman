@@ -49,7 +49,7 @@ module.exports = async function chatHandler(req, res) {
         return;
       }
 
-      const apiKey = process.env.DEEPSEEK_API_KEY;
+      const apiKey = (process.env.DEEPSEEK_API_KEY || '').trim();
       if (!apiKey) {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json');
