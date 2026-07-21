@@ -50,6 +50,7 @@ const VoiceManager = {
     this._recorder.onStart(() => {
       this._recording = true;
       this._audioFrames = [];
+      this._recordStartTime = Date.now();
       if (this._onStart) this._onStart();
     });
 
@@ -263,7 +264,22 @@ const VoiceManager = {
    */
   _doASRFromFrames(frames) {
     const totalBytes = frames.reduce((s, f) => s + f.byteLength, 0);
-    console.log('[Voice] PCM帧合成WAV, PCM大小:', (totalBytes / 1024).toFixed(1), 'KB, 帧数:', frames.length);
+    const actualDuration = this._recordStartTime ? ((Date.now() - this._recordStartTime) / 1000).toFixed(1) : '?';
+    const expectedBytes = CONFIG.sampleRate * 2 * actualDuration; // 16kHz * 16bit * 秒数
+    console.log('[Voice] PCM帧合成WAV, PCM大小:', (totalBytes / 1024).toFixed(1), 'KB, 帧数:', frames.length,
+      '录制时长:', actualDuration + 's', '期望PCM:', (expectedBytes / 1024).toFixed(1), 'KB');
+
+    // 诊断：检查前几个sample是否有非零值（判断是否静音）
+    if (totalBytes >= 4) {
+      const samples = new Int16Array(frames[0].slice(0, Math.min(200, frames[0].byteLength)));
+      let nonZero = 0, maxVal = 0;
+      for (let i = 0; i < samples.length; i++) {
+        if (samples[i] !== 0) nonZero++;
+        maxVal = Math.max(maxVal, Math.abs(samples[i]));
+      }
+      console.log('[Voice] 首帧诊断: 非零samples=' + nonZero + '/' + samples.length + ' 最大振幅=' + maxVal);
+    }
+
     const wavBase64 = this._framesToWavBase64(frames);
     console.log('[Voice] WAV base64:', (wavBase64.length / 1024).toFixed(1), 'KB');
     this._sendASR(wavBase64);
@@ -379,6 +395,8 @@ const VoiceManager = {
           numberOfChannels: CONFIG.numberOfChannels,
           format: 'PCM',        // PCM帧数据，自建WAV头保证16kHz兼容性
           frameSize: 10,        // 每帧10KB
+          encodeBitRate: 48000, // 符合16000Hz的有效码率范围(24000~96000)
+          disableVolumeControl: true, // 禁用iOS自动增益，避免识别不准
         });
       },
       fail: () => {
