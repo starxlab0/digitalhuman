@@ -64,20 +64,21 @@ const VoiceManager = {
       this._recording = false;
       if (this._onEnd) this._onEnd();
 
-      // 优先用收集的 PCM 帧生成 WAV（兼容开发者工具）
-      if (this._audioFrames && this._audioFrames.length > 0) {
-        const wavBase64 = this._framesToWavBase64(this._audioFrames);
-        console.log('[Voice] 音频帧合成WAV, 大小:', (wavBase64.length / 1024).toFixed(1), 'KB (base64)');
-        this._sendASR(wavBase64);
-        this._audioFrames = null;
-      } else if (res.tempFilePath) {
-        // 真机上某些情况可能回退到文件读取
-        console.log('[Voice] 回退到文件读取模式');
+      // 优先使用录制文件（开发者工具和真机都能产出正确格式的音频文件）
+      if (res.tempFilePath) {
+        console.log('[Voice] 录制文件路径:', res.tempFilePath, '时长:', res.duration || '?', 'ms');
         this._doASRFromFile(res.tempFilePath);
+      } else if (this._audioFrames && this._audioFrames.length > 0) {
+        const totalPcmBytes = this._audioFrames.reduce((s, f) => s + f.byteLength, 0);
+        console.log('[Voice] 无录制文件，用PCM帧合成WAV, PCM原始大小:', (totalPcmBytes / 1024).toFixed(1), 'KB');
+        const wavBase64 = this._framesToWavBase64(this._audioFrames);
+        console.log('[Voice] WAV base64大小:', (wavBase64.length / 1024).toFixed(1), 'KB');
+        this._sendASR(wavBase64);
       } else {
-        console.warn('[Voice] 无音频数据');
+        console.warn('[Voice] 无音频数据 (无文件且无帧)');
         if (this._onResult) this._onResult('');
       }
+      this._audioFrames = null;
     });
 
     this._recorder.onError((err) => {
@@ -333,8 +334,8 @@ const VoiceManager = {
           duration: 5000,       // 5秒录音
           sampleRate: CONFIG.sampleRate,
           numberOfChannels: CONFIG.numberOfChannels,
-          format: 'PCM',        // PCM格式获取帧数据（兼容开发者工具和真机）
-          frameSize: 10,        // 每帧10KB
+          format: 'wav',        // WAV 格式，录制文件直接兼容 Azure Speech
+          frameSize: 10,        // 每帧10KB（仍收集帧做备用）
         });
       },
       fail: () => {

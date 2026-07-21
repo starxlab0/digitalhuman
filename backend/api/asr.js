@@ -104,10 +104,14 @@ module.exports = async function asrHandler(req, res) {
         wavBuffer
       );
 
-      console.log('[ASR] Azure 响应:', JSON.stringify(result).substring(0, 600));
+      console.log('[ASR] Azure 完整响应:', JSON.stringify(result.data));
+      console.log('[ASR] WAV大小:', wavBuffer.length, '字节, 时长约:', (wavBuffer.length / (16000 * 2)).toFixed(1), '秒');
 
       if (result.data && result.data.RecognitionStatus === 'Success') {
         const text = result.data.DisplayText || '';
+        if (!text) {
+          console.log('[ASR] 识别成功但 DisplayText 为空，NBest:', JSON.stringify(result.data.NBest || []));
+        }
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ text }));
