@@ -33,22 +33,6 @@
 
   <!-- 底部控制面板 -->
   <view class="control-panel">
-    <!-- 表情按钮 -->
-    <view class="expr-row">
-      <view class="expr-btn {{currentExpr==='neutral'?'on':''}}"  data-expr="neutral"  bindtap="setExpr">😐</view>
-      <view class="expr-btn {{currentExpr==='happy'?'on':''}}"    data-expr="happy"    bindtap="setExpr">😄</view>
-      <view class="expr-btn {{currentExpr==='sad'?'on':''}}"      data-expr="sad"      bindtap="setExpr">😢</view>
-      <view class="expr-btn {{currentExpr==='surprised'?'on':''}}" data-expr="surprised" bindtap="setExpr">😲</view>
-      <view class="expr-btn {{currentExpr==='angry'?'on':''}}"    data-expr="angry"    bindtap="setExpr">😠</view>
-    </view>
-    <view class="expr-row">
-      <view class="expr-btn {{currentExpr==='wink'?'on':''}}"  data-expr="wink"  bindtap="setExpr">😉</view>
-      <view class="expr-btn {{currentExpr==='love'?'on':''}}"  data-expr="love"  bindtap="setExpr">😍</view>
-      <view class="expr-btn {{currentExpr==='cool'?'on':''}}"  data-expr="cool"  bindtap="setExpr">😎</view>
-      <view class="expr-btn {{currentExpr==='silly'?'on':''}}" data-expr="silly" bindtap="setExpr">😜</view>
-      <view class="expr-btn {{currentExpr==='sleepy'?'on':''}}" data-expr="sleepy" bindtap="setExpr">😴</view>
-    </view>
-
     <!-- 功能按钮 -->
     <view class="action-row">
       <view class="action-btn {{voiceRecording?'listening':''}}" bindtap="toggleVoice">

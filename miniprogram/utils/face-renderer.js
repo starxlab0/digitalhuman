@@ -67,6 +67,9 @@ class FaceRenderer {
     this.speakTime = 0;
     this.speakDuration = 0;
     this.speakNodPhase = 0;
+    this.mouthPhase = 0;
+    this.mouthOpen = 0;
+    this._nextSpeakRate = null;
 
     // 开始加载图片
     this._loadAll(canvas);
@@ -142,15 +145,32 @@ class FaceRenderer {
       }
     }
 
-    // 说话动画：点头 + 轻微张嘴模拟
+    // 说话动画：点头 + 嘴部张合模拟（音节节奏）
     if (this.isSpeaking) {
       this.speakTime += dt * 1000;
+
+      // 嘴部张合：5.5Hz 音节频率 + 随机微调
+      if (!this._nextSpeakRate) {
+        this._nextSpeakRate = 4.5 + Math.random() * 2.5; // 4.5~7Hz 模拟不同音节
+      }
+      this.mouthPhase += dt * this._nextSpeakRate * Math.PI * 2;
+      if (this.mouthPhase > Math.PI * 2) {
+        this.mouthPhase -= Math.PI * 2;
+        this._nextSpeakRate = 4.5 + Math.random() * 2.5; // 每个周期换频率
+      }
+      // mouthOpen: 0~0.06 的 Y 轴拉伸
+      this.mouthOpen = (Math.abs(Math.sin(this.mouthPhase)) * 0.05 +
+                        Math.abs(Math.sin(this.mouthPhase * 0.3)) * 0.01);
+
+      // 头部点头
       this.speakNodPhase += dt * 5.5;
       this.targetHeadY = -0.5 + Math.sin(this.speakNodPhase) * 0.4;
       this.targetHeadX = Math.sin(this.speakNodPhase * 0.7) * 0.25;
 
       if (this.speakTime > this.speakDuration) {
         this.isSpeaking = false;
+        this.mouthOpen = 0;
+        this._nextSpeakRate = null;
         this.targetHeadY += (0 - this.targetHeadY) * 3 * dt;
         this.targetHeadX += (0 - this.targetHeadX) * 3 * dt;
       }
@@ -252,8 +272,10 @@ class FaceRenderer {
     const cy = this.h * 0.4 + this.headY * 3;
     c.translate(cx, cy);
     c.rotate(this.headTilt * Math.PI / 180);
-    const bs = 1 + Math.sin(this.breathPhase) * 0.012;
-    c.scale(bs, bs);
+    // 呼吸 + 口型 Y 轴张合
+    const breathScale = 1 + Math.sin(this.breathPhase) * 0.012;
+    const mouthSY = this.isSpeaking ? (1 + this.mouthOpen) : 1;
+    c.scale(breathScale, breathScale * mouthSY);
     // 偏移回去，让坐标原点回到 0,0（模型空间）
     c.translate(-cx, -cy);
 

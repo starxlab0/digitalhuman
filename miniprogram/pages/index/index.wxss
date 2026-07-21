@@ -131,32 +131,6 @@
   box-sizing: border-box;
 }
 
-.expr-row {
-  display: flex;
-  justify-content: center;
-  gap: 16rpx;
-  margin-bottom: 14rpx;
-}
-
-.expr-btn {
-  width: 88rpx;
-  height: 88rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0,0,0,0.06);
-  border-radius: 22rpx;
-  font-size: 40rpx;
-  transition: background 0.2s, transform 0.15s;
-}
-.expr-btn:active {
-  transform: scale(0.9);
-}
-.expr-btn.on {
-  background: rgba(66,165,245,0.2);
-  box-shadow: 0 0 20rpx rgba(66,165,245,0.15);
-}
-
 .action-row {
   display: flex;
   justify-content: center;
