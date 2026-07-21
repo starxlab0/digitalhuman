@@ -1,7 +1,12 @@
 {
   "description": "桌面数字人 - 微信小程序版",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      "backend/",
+      "archive/",
+      "generated-images/",
+      "scripts/"
+    ],
     "include": []
   },
   "setting": {
