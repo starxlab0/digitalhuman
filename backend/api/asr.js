@@ -64,7 +64,6 @@ module.exports = async function asrHandler(req, res) {
     return;
   }
 
-  // 收集 binary body
   const chunks = [];
   req.on('data', (chunk) => { chunks.push(Buffer.from(chunk)); });
 
@@ -83,13 +82,21 @@ module.exports = async function asrHandler(req, res) {
       const speechRegion = process.env.AZURE_SPEECH_REGION;
       const language = isCantonese ? 'zh-HK' : 'zh-CN';
 
-      console.log('[ASR] Azure, lang:', language, 'audio_base64_len:', audio.length);
-
-      // 解码 base64 WAV → 剥离 WAV 头 → 发送原始 PCM WAV
       const wavBuffer = Buffer.from(audio, 'base64');
-      console.log('[ASR] WAV大小:', wavBuffer.length);
+      console.log('[ASR] lang:', language, 'WAV大小:', wavBuffer.length, '字节');
 
-      // Azure STT REST API
+      // 解析 WAV 头，输出诊断信息
+      try {
+        const riff = wavBuffer.toString('ascii', 0, 4);
+        const fmt = wavBuffer.toString('ascii', 8, 12);
+        const dataOffset = wavBuffer.indexOf('data', 36);
+        const channels = wavBuffer.readUInt16LE(22);
+        const sampleRate = wavBuffer.readUInt32LE(24);
+        const bitsPerSample = wavBuffer.readUInt16LE(34);
+        const dataSize = dataOffset > 0 ? wavBuffer.readUInt32LE(dataOffset + 4) : -1;
+        console.log('[ASR] WAV头: channels=' + channels + ' rate=' + sampleRate + ' bits=' + bitsPerSample + ' dataSize=' + dataSize + ' dataOffset=' + dataOffset);
+      } catch (e) { console.log('[ASR] WAV头解析失败:', e.message); }
+
       const host = `${speechRegion}.stt.speech.microsoft.com`;
       const path = `/speech/recognition/conversation/cognitiveservices/v1?language=${language}`;
 
@@ -104,35 +111,27 @@ module.exports = async function asrHandler(req, res) {
         wavBuffer
       );
 
-      console.log('[ASR] Azure 完整响应:', JSON.stringify(result.data));
-      console.log('[ASR] WAV大小:', wavBuffer.length, '字节, 时长约:', (wavBuffer.length / (16000 * 2)).toFixed(1), '秒');
+      const azureResp = result.data || {};
+      console.log('[ASR] Azure:', JSON.stringify(azureResp));
 
-      if (result.data && result.data.RecognitionStatus === 'Success') {
-        const text = result.data.DisplayText || '';
-        if (!text) {
-          console.log('[ASR] 识别成功但 DisplayText 为空，NBest:', JSON.stringify(result.data.NBest || []));
-        }
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ text }));
-      } else if (result.data && result.data.RecognitionStatus === 'NoMatch') {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({
-          text: '',
-          detail: {
-            status: 'NoMatch',
-            messages: result.data.NBest || [],
-          },
-        }));
-      } else {
-        const err = (result.data && result.data.error)
-          ? result.data.error.message || JSON.stringify(result.data)
-          : `HTTP ${result.statusCode}`;
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ text: '', error: 'Azure错误: ' + err }));
+      // 始终返回完整诊断
+      const response = {
+        text: (azureResp.RecognitionStatus === 'Success') ? (azureResp.DisplayText || '') : '',
+        azureStatus: azureResp.RecognitionStatus || 'unknown',
+        azureNBest: azureResp.NBest || null,
+      };
+
+      if (azureResp.RecognitionStatus === 'NoMatch') {
+        response.detail = { status: 'NoMatch', messages: azureResp.NBest || [] };
+      } else if (azureResp.error) {
+        response.error = 'Azure错误: ' + (azureResp.error.message || JSON.stringify(azureResp.error));
+      } else if (!response.text && azureResp.RecognitionStatus !== 'Success') {
+        response.error = 'Azure状态: ' + JSON.stringify(azureResp);
       }
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(response));
     } catch (e) {
       console.error('[ASR] 异常:', e.message);
       res.statusCode = 500;

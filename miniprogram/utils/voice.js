@@ -191,9 +191,8 @@ const VoiceManager = {
           if (this._onResult) this._onResult(json.text, json.detail);
         } else {
           const errMsg = json.error
-            || (json.detail
-              ? (json.detail.status === 'NoMatch' ? '未识别到语音（麦克风问题或未说话）' : `code=${json.detail.code} ${json.detail.desc}`)
-              : '未识别到语音');
+            || (json.azureStatus === 'NoMatch' ? 'Azure NoMatch（未检测到语音）'
+              : `Azure状态: ${json.azureStatus || '?'} NBest: ${JSON.stringify(json.azureNBest)}`);
           console.warn('[Voice] ASR 空结果:', errMsg);
           if (this._onResult) this._onResult('', json.detail || { error: errMsg });
         }
