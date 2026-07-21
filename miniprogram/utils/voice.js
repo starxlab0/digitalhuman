@@ -518,7 +518,7 @@ const VoiceManager = {
   chat(text, lang) {
     return new Promise((resolve) => {
       wx.request({
-        url: proxyBase + '/api/chat',
+        url: CONFIG.proxyBase + '/api/chat',
         method: 'POST',
         data: { text, lang },
         header: { 'Content-Type': 'application/json' },
