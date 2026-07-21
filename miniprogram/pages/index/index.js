@@ -193,49 +193,78 @@ Page({
     console.log('[Page] toggleVoice 触发, isCantonese:', isCantonese);
     this.setData({ voiceRecording: true, voiceActive: true, voiceHint: isCantonese ? '聽緊...' : '正在听...' });
 
-    const handleResult = (text, detail) => {
+    const handleResult = async (text, detail) => {
       console.log('[Page] 处理语音结果:', JSON.stringify(text), 'detail:', JSON.stringify(detail));
       this.setData({ voiceActive: false, voiceRecording: false });
       if (!text) text = '';
 
-      const responses = isCantonese ? {
-        happy: '哈哈，好開心呀！', sad: '唔緊要，一切都會好㗎~',
-        surprised: '嘩！太震驚啦！', angry: '哼，唔好惹我嬲',
-        wink: '嗨，你好靚啊~', love: '我都好鍾意你！',
-        cool: '冇錯，我好型㗎~', silly: '咧咧咧~',
-        sleepy: '好眼瞓...早唞Zzz', neutral: '嗯嗯，我聽緊~',
-        greet: '你好呀！有咩想同我傾㗎？', unknown: '嗯…聽唔清楚，再試下？'
-      } : {
-        happy: '哈哈，太开心了！', sad: '别难过，都会好的~',
-        surprised: '哇！太惊讶了！', angry: '哼，不要惹我生气',
-        wink: '嘿，你好呀~', love: '我也好喜欢你！',
-        cool: '没错，我很酷~', silly: '略略略~',
-        sleepy: '好困...晚安Zzz', neutral: '嗯嗯，我在听~',
-        greet: '你好呀！有什么想和我聊的吗？', unknown: '嗯…没听清，再试试？'
-      };
+      // 定义兜底回复
+      const isCantonese = this.data.lang === 'zh-HK';
+      const fallbackUnknown = isCantonese ? '嗯…聽唔清楚，再試下？' : '嗯…没听清，再试试？';
+      const fallbackEmpty  = isCantonese ? '你想講咩呀？我聽緊~' : '你想说什么呀？我在听~';
 
-      const expr = this._parseVoiceIntent(text);
-      const reply = responses[expr] || responses.unknown;
-      console.log('[Page] 识别意图:', expr, '回复:', reply);
-
+      // 没识别到文字
       if (!text && detail) {
-        let diagMsg = reply;
+        let diagMsg = fallbackUnknown;
         if (detail.requestFail) {
           diagMsg = '❌ 网络请求失败: ' + (detail.errMsg || '');
         } else if (detail.code && detail.code !== 0) {
-          diagMsg = '❌ 讯飞错误 code=' + detail.code + ': ' + (detail.desc || '');
+          diagMsg = '❌ 错误 code=' + detail.code + ': ' + (detail.desc || '');
         } else if (detail.msgs && detail.msgs.length === 0) {
-          diagMsg = '❌ 未收到讯飞响应 (消息数=0)';
+          diagMsg = '❌ 未收到响应';
         } else {
           diagMsg = '⚠️ 未识别到文字';
         }
         this.setData({ debugText: diagMsg });
         setTimeout(() => this.setData({ debugText: '' }), 5000);
+        this._showBubble(diagMsg);
+        return;
       }
+
+      if (!text) {
+        this._showBubble(fallbackEmpty);
+        return;
+      }
+
+      // 显示等待状态
+      this.setData({ debugText: '🤖 思考中...' });
+      wx.showToast({ title: '思考中...', icon: 'loading', duration: 3000 });
+
+      // 调用 LLM 对话
+      const llmResult = await VoiceManager.chat(text, this.data.lang);
+      this.setData({ debugText: '' });
+
+      let reply = llmResult.reply;
+      let expr = llmResult.expr || 'neutral';
+
+      // LLM 失败则回退关键词匹配
+      if (!reply) {
+        console.warn('[Page] LLM 无回复，回退关键词匹配');
+        expr = this._parseVoiceIntent(text);
+        const responses = isCantonese ? {
+          happy:'哈哈，好開心呀！', sad:'唔緊要，一切都會好㗎~',
+          surprised:'嘩！太震驚啦！', angry:'哼，唔好惹我嬲',
+          wink:'嗨，你好靚啊~', love:'我都好鍾意你！',
+          cool:'冇錯，我好型㗎~', silly:'咧咧咧~',
+          sleepy:'好眼瞓...早唞Zzz', neutral:'嗯嗯，我聽緊~',
+          greet:'你好呀！有咩想同我傾㗎？', unknown:fallbackUnknown
+        } : {
+          happy:'哈哈，太开心了！', sad:'别难过，都会好的~',
+          surprised:'哇！太惊讶了！', angry:'哼，不要惹我生气',
+          wink:'嘿，你好呀~', love:'我也好喜欢你！',
+          cool:'没错，我很酷~', silly:'略略略~',
+          sleepy:'好困...晚安Zzz', neutral:'嗯嗯，我在听~',
+          greet:'你好呀！有什么想和我聊的吗？', unknown:fallbackUnknown
+        };
+        reply = responses[expr] || responses.unknown;
+      }
+
+      console.log('[Page] 最终回复:', reply, '表情:', expr);
 
       if (expr && expr !== 'unknown') this._applyExpression(expr);
       this._showBubble(reply);
 
+      // TTS 播报
       VoiceManager.speak(reply,
         () => { this._startMouthAnim(reply); },
         () => { this._stopMouthAnim(); }

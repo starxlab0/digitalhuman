@@ -507,6 +507,38 @@ const VoiceManager = {
 
   isRecording() { return this._recording; },
   isSpeaking()  { return this._speaking; },
+
+  // ========== LLM 对话 ==========
+  /**
+   * 调用 LLM 对话接口
+   * @param {string} text - 用户说的话
+   * @param {string} lang - 语言 zh-CN / zh-HK
+   * @returns {Promise<{reply:string, expr:string, error?:string}>}
+   */
+  chat(text, lang) {
+    return new Promise((resolve) => {
+      wx.request({
+        url: proxyBase + '/api/chat',
+        method: 'POST',
+        data: { text, lang },
+        header: { 'Content-Type': 'application/json' },
+        timeout: 25000,
+        success: (res) => {
+          if (res.statusCode === 200 && res.data.reply) {
+            console.log('[Voice] LLM 回复:', res.data.reply, '| 表情:', res.data.expr);
+            resolve(res.data);
+          } else {
+            console.warn('[Voice] LLM 异常:', res.data);
+            resolve({ reply: '', expr: 'neutral', error: res.data.error || 'LLM无响应' });
+          }
+        },
+        fail: (err) => {
+          console.error('[Voice] LLM 请求失败:', err);
+          resolve({ reply: '', expr: 'neutral', error: '网络错误' });
+        },
+      });
+    });
+  },
 };
 
 module.exports = VoiceManager;
