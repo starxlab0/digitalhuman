@@ -80,7 +80,7 @@ module.exports = async function ttsHandler(req, res) {
         {
           'Ocp-Apim-Subscription-Key': speechKey,
           'Content-Type': 'application/ssml+xml',
-          'X-Microsoft-OutputFormat': 'raw-16khz-16bit-mono-pcm',
+          'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
           'User-Agent': 'digitalperson-miniprogram',
         },
         ssml
@@ -89,10 +89,10 @@ module.exports = async function ttsHandler(req, res) {
       console.log('[TTS] Azure 响应: status=', result.statusCode, 'isAudio=', result.isAudio);
 
       if (result.isAudio && result.audio) {
-        // 返回 raw PCM base64，让前端包装为 WAV 播放
+        // 返回 MP3 base64，小程序 innerAudioContext 可直接播放
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ audio: result.audio, format: 'pcm' }));
+        res.end(JSON.stringify({ audio: result.audio, format: 'audio/mpeg' }));
       } else {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
