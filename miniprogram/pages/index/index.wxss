@@ -1,0 +1,200 @@
+/* ========== 布局 ========== */
+.container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 0 30rpx;
+  box-sizing: border-box;
+}
+
+/* ========== 数字人区域 ========== */
+.avatar-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 20rpx;
+}
+
+.debug-box {
+  width: 90%;
+  padding: 16rpx 24rpx;
+  margin-top: 20rpx;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 16rpx;
+  color: #ffeb3b;
+  font-size: 24rpx;
+  text-align: center;
+  z-index: 100;
+}
+
+.face-canvas {
+  width: 600rpx;
+  height: 700rpx;
+  background: #FFFFFF;
+  border-radius: 20rpx;
+  box-shadow: 0 8rpx 40rpx rgba(0,0,0,0.08);
+}
+
+/* ========== 语音气泡 ========== */
+.speech-bubble {
+  position: absolute;
+  top: 30rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,0.92);
+  color: #1a1a2e;
+  padding: 16rpx 32rpx;
+  border-radius: 28rpx;
+  font-size: 28rpx;
+  max-width: 480rpx;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s, transform 0.3s;
+  transform: translateX(-50%) translateY(10rpx);
+  z-index: 20;
+  white-space: nowrap;
+}
+.speech-bubble.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -16rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 10rpx solid transparent;
+  border-top-color: rgba(255,255,255,0.92);
+}
+
+/* ========== 语音指示器 ========== */
+.voice-indicator {
+  position: absolute;
+  bottom: 20rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10rpx;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+  z-index: 21;
+}
+.voice-indicator.active {
+  opacity: 1;
+}
+
+.wave {
+  display: flex;
+  align-items: flex-end;
+  gap: 8rpx;
+  height: 72rpx;
+}
+.wave .bar {
+  width: 8rpx;
+  background: linear-gradient(180deg, #64B5F6, #1976D2);
+  border-radius: 4rpx;
+  animation: waveAnim 0.7s ease-in-out infinite;
+}
+.wave .bar:nth-child(1) { height: 32rpx; animation-delay: 0s; }
+.wave .bar:nth-child(2) { height: 56rpx; animation-delay: 0.1s; }
+.wave .bar:nth-child(3) { height: 72rpx; animation-delay: 0.2s; }
+.wave .bar:nth-child(4) { height: 56rpx; animation-delay: 0.3s; }
+.wave .bar:nth-child(5) { height: 32rpx; animation-delay: 0.4s; }
+
+@keyframes waveAnim {
+  0%, 100% { transform: scaleY(0.5); opacity: 0.5; }
+  50%      { transform: scaleY(1.1); opacity: 1; }
+}
+
+.hint {
+  font-size: 24rpx;
+  color: rgba(0,0,0,0.65);
+  background: rgba(0,0,0,0.08);
+  padding: 6rpx 24rpx;
+  border-radius: 20rpx;
+}
+
+/* ========== 控制面板 ========== */
+.control-panel {
+  width: 100%;
+  padding: 0 30rpx;
+  box-sizing: border-box;
+}
+
+.expr-row {
+  display: flex;
+  justify-content: center;
+  gap: 16rpx;
+  margin-bottom: 14rpx;
+}
+
+.expr-btn {
+  width: 88rpx;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.06);
+  border-radius: 22rpx;
+  font-size: 40rpx;
+  transition: background 0.2s, transform 0.15s;
+}
+.expr-btn:active {
+  transform: scale(0.9);
+}
+.expr-btn.on {
+  background: rgba(66,165,245,0.2);
+  box-shadow: 0 0 20rpx rgba(66,165,245,0.15);
+}
+
+.action-row {
+  display: flex;
+  justify-content: center;
+  gap: 40rpx;
+  margin-top: 10rpx;
+}
+
+.action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+  padding: 20rpx 44rpx;
+  background: rgba(0,0,0,0.06);
+  border-radius: 28rpx;
+  transition: background 0.2s;
+}
+.action-btn:active {
+  background: rgba(0,0,0,0.1);
+}
+.action-btn.on {
+  background: rgba(255,150,80,0.15);
+  box-shadow: 0 0 24rpx rgba(255,150,80,0.15);
+}
+.action-btn.listening {
+  background: rgba(66,165,245,0.2);
+  box-shadow: 0 0 24rpx rgba(66,165,245,0.2);
+  animation: pulseVoice 1s ease-in-out infinite;
+}
+@keyframes pulseVoice {
+  0%, 100% { box-shadow: 0 0 20rpx rgba(66,165,245,0.2); }
+  50%      { box-shadow: 0 0 40rpx rgba(66,165,245,0.55); }
+}
+
+.action-btn .icon {
+  font-size: 44rpx;
+}
+.action-btn .label {
+  font-size: 22rpx;
+  color: rgba(0,0,0,0.65);
+}

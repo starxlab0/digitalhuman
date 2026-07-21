@@ -1,0 +1,6 @@
+{
+  "usingComponents": {
+    "avatar-canvas": "../../components/avatar-canvas/avatar-canvas"
+  },
+  "navigationBarTitleText": "桌面数字人"
+}

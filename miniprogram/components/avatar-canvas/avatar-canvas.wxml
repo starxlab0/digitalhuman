@@ -1,0 +1,9 @@
+<canvas
+  type="2d"
+  id="faceCanvas"
+  class="face-canvas"
+  bindtouchstart="onTouchStart"
+  bindtouchmove="onTouchMove"
+  bindtouchend="onTouchEnd"
+  bindtap="onTap"
+></canvas>

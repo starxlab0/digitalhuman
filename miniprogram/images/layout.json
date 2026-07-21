@@ -1,0 +1,40 @@
+{
+  "canvasSize": [
+    210,
+    210
+  ],
+  "components": {
+    "body": {
+      "file": "body.png",
+      "x": 0,
+      "y": 134,
+      "w": 210,
+      "h": 76,
+      "zIndex": 0
+    },
+    "face_base": {
+      "file": "face_base.png",
+      "x": 55,
+      "y": 52,
+      "w": 99,
+      "h": 82,
+      "zIndex": 1
+    },
+    "nose": {
+      "file": "nose.png",
+      "x": 88,
+      "y": 77,
+      "w": 33,
+      "h": 45,
+      "zIndex": 5
+    },
+    "hair": {
+      "file": "hair.png",
+      "x": 55,
+      "y": 0,
+      "w": 99,
+      "h": 61,
+      "zIndex": 10
+    }
+  }
+}

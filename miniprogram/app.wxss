@@ -1,0 +1,6 @@
+page {
+  height: 100vh;
+  background: #FFFFFF;
+  overflow: hidden;
+  user-select: none;
+}

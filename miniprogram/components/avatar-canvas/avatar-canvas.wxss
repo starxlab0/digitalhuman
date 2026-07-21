@@ -1,0 +1,7 @@
+.face-canvas {
+  width: 300px;
+  height: 350px;
+  background: #FFFFFF;
+  border-radius: 10px;
+  display: block;
+}

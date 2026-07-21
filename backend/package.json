@@ -1,0 +1,8 @@
+{
+  "name": "digitalperson-backend",
+  "version": "1.0.0",
+  "description": "数字人语音后端 - 讯飞 WebSocket v2 API 中继 (Vercel Serverless)",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
