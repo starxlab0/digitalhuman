@@ -192,7 +192,9 @@ const VoiceManager = {
           if (this._onResult) this._onResult(json.text, json.detail);
         } else {
           const errMsg = json.error
-            || (json.detail ? `code=${json.detail.code} ${json.detail.desc}` : '未知错误');
+            || (json.detail
+              ? (json.detail.status === 'NoMatch' ? '未识别到语音（麦克风问题或未说话）' : `code=${json.detail.code} ${json.detail.desc}`)
+              : '未识别到语音');
           console.warn('[Voice] ASR 空结果:', errMsg);
           if (this._onResult) this._onResult('', json.detail || { error: errMsg });
         }

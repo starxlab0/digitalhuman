@@ -104,7 +104,7 @@ module.exports = async function asrHandler(req, res) {
         wavBuffer
       );
 
-      console.log('[ASR] Azure 响应:', JSON.stringify(result).substring(0, 400));
+      console.log('[ASR] Azure 响应:', JSON.stringify(result).substring(0, 600));
 
       if (result.data && result.data.RecognitionStatus === 'Success') {
         const text = result.data.DisplayText || '';
@@ -114,9 +114,17 @@ module.exports = async function asrHandler(req, res) {
       } else if (result.data && result.data.RecognitionStatus === 'NoMatch') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ text: '' }));
+        res.end(JSON.stringify({
+          text: '',
+          detail: {
+            status: 'NoMatch',
+            messages: result.data.NBest || [],
+          },
+        }));
       } else {
-        const err = (result.data && result.data.error) ? result.data.error.message || JSON.stringify(result.data) : '未知错误';
+        const err = (result.data && result.data.error)
+          ? result.data.error.message || JSON.stringify(result.data)
+          : `HTTP ${result.statusCode}`;
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ text: '', error: 'Azure错误: ' + err }));
