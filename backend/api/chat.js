@@ -36,6 +36,13 @@ function httpPost(hostname, path, headers, body) {
 module.exports = async function chatHandler(req, res) {
   console.log('[Chat] 收到请求:', req.method);
 
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.statusCode = 200; res.end(); return; }
+  if (req.method !== 'POST') { res.statusCode = 405; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Method Not Allowed' })); return; }
+
   const chunks = [];
   req.on('data', (chunk) => { chunks.push(chunk); });
 

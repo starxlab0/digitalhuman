@@ -1,108 +1,126 @@
 /**
- * TTS 语音合成 - Azure Speech Services HTTP REST API
+ * TTS 语音合成 API
+ * 使用 Azure Speech SDK 合成音频 + 收集 Viseme 事件实现精准口型同步
+ *
+ * POST /api/tts
+ * Body: { text, lang }
+ * Response: { audio: base64, contentType, visemes: [{timeMs, visemeId}], durationMs }
  */
-const https = require('https');
 
-// ===================== HTTP POST 封装 =====================
+module.exports = async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.statusCode = 200; res.end(); return; }
+  if (req.method !== 'POST') { res.statusCode = 405; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Method Not Allowed' })); return; }
 
-function httpPost(hostname, path, headers, body) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      hostname,
-      path,
-      method: 'POST',
-      headers,
-      timeout: 20000,
-    };
-    const req = https.request(opts, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => { chunks.push(chunk); });
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks);
-        const contentType = res.headers['content-type'] || '';
-        if (contentType.includes('audio')) {
-          resolve({ statusCode: res.statusCode, audio: raw.toString('base64'), isAudio: true });
-        } else {
-          resolve({ statusCode: res.statusCode, error: raw.toString() });
-        }
-      });
-    });
-    req.on('error', (e) => reject(e));
-    req.on('timeout', () => { req.destroy(); reject(new Error('http timeout')); });
-    req.write(body);
-    req.end();
-  });
-}
+  // Vercel Serverless 无 body parser，手动解析 JSON
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.from(chunk));
+  }
+  const body = JSON.parse(Buffer.concat(chunks).toString());
 
-// ===================== 主处理 =====================
-
-module.exports = async function ttsHandler(req, res) {
-  if (req.method !== 'POST') {
-    res.statusCode = 405;
+  const { text, lang } = body || {};
+  if (!text || text.length === 0) {
+    res.statusCode = 400;
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ error: '只支持 POST' }));
+    res.end(JSON.stringify({ error: 'Missing text' }));
     return;
   }
 
-  let body = '';
-  req.on('data', (chunk) => { body += chunk; });
+  const region = process.env.AZURE_SPEECH_REGION;
+  const key = process.env.AZURE_SPEECH_KEY;
 
-  req.on('end', async () => {
-    try {
-      const { text, lang } = JSON.parse(body);
-      if (!text) {
-        res.statusCode = 400;
-        res.end(JSON.stringify({ error: '缺少 text 参数' }));
-        return;
-      }
+  if (!region || !key) {
+    console.error('[TTS] 缺少 Azure 配置');
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Azure未配置' }));
+    return;
+  }
 
-      const isCantonese = lang === 'zh-HK';
-      const speechKey = process.env.AZURE_SPEECH_KEY;
-      const speechRegion = process.env.AZURE_SPEECH_REGION;
-      const voiceName = isCantonese ? 'zh-HK-HiuGaaiNeural' : 'zh-CN-XiaoyiNeural';
+  // 选择语音
+  const voiceMap = {
+    cantonese: 'zh-HK-HiuMaanNeural',
+    'zh-hk': 'zh-HK-HiuMaanNeural',
+    mandarin: 'zh-CN-XiaoxiaoNeural',
+    zh: 'zh-CN-XiaoxiaoNeural',
+    'zh-cn': 'zh-CN-XiaoxiaoNeural',
+  };
+  const voiceName = voiceMap[(lang || '').toLowerCase()] || 'zh-CN-XiaoxiaoNeural';
+  const ssmlLang = voiceName.startsWith('zh-HK') ? 'zh-HK' : 'zh-CN';
 
-      console.log('[TTS] Azure, voice:', voiceName, 'text:', text.substring(0, 50));
-
-      // SSML 格式
-      const ssml = `
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">
+  // 构建 SSML（启用 viseme 事件）
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
+    xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="${ssmlLang}">
   <voice name="${voiceName}">
+    <mstts:viseme type="FacialExpression"/>
     ${text}
   </voice>
-</speak>`.trim();
+</speak>`;
 
-      const host = `${speechRegion}.tts.speech.microsoft.com`;
-      const path = '/cognitiveservices/v1';
+  try {
+    const sdk = require('microsoft-cognitiveservices-speech-sdk');
 
-      const result = await httpPost(
-        host,
-        path,
-        {
-          'Ocp-Apim-Subscription-Key': speechKey,
-          'Content-Type': 'application/ssml+xml',
-          'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
-          'User-Agent': 'digitalperson-miniprogram',
+    const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
+    speechConfig.speechSynthesisVoiceName = voiceName;
+    speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Audio48Khz128KBitRateMonoMp3;
+
+    // 不绑定音频输出设备 → 音频写入 result.audioData
+    const synthesizer = new sdk.SpeechSynthesizer(speechConfig, null);
+
+    // 收集 viseme 事件
+    const visemes = [];
+    synthesizer.visemeReceived = (sender, event) => {
+      visemes.push({
+        timeMs: Math.round(event.audioOffset / 10000),  // 100ns → ms
+        visemeId: event.visemeId,
+      });
+    };
+
+    // 执行合成
+    const result = await new Promise((resolve, reject) => {
+      synthesizer.speakSsmlAsync(
+        ssml,
+        (r) => {
+          synthesizer.close();
+          resolve(r);
         },
-        ssml
+        (err) => {
+          synthesizer.close();
+          reject(err);
+        }
       );
+    });
 
-      console.log('[TTS] Azure 响应: status=', result.statusCode, 'isAudio=', result.isAudio);
-
-      if (result.isAudio && result.audio) {
-        // 返回 MP3 base64，小程序 innerAudioContext 可直接播放
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ audio: result.audio, format: 'audio/mpeg' }));
-      } else {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ audio: '', error: 'Azure错误: ' + (result.error || '无音频返回') }));
-      }
-    } catch (e) {
-      console.error('[TTS] 异常:', e.message);
+    if (result.reason !== sdk.ResultReason.SynthesizingAudioCompleted) {
+      const detail = sdk.ResultReason[result.reason] || result.reason;
+      console.error(`[TTS] 合成失败: ${detail}`);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ audio: '', error: 'Azure错误: ' + e.message }));
+      res.end(JSON.stringify({ error: `TTS合成失败: ${detail}` }));
+      return;
     }
-  });
+
+    const audioBase64 = Buffer.from(result.audioData).toString('base64');
+    const durationMs = Math.round(result.audioDuration / 10000);
+
+    console.log(`[TTS] 合成成功: ${text.length}字, ${durationMs}ms, ${visemes.length}个viseme`);
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      audio: audioBase64,
+      contentType: 'audio/mpeg',
+      visemes,
+      durationMs,
+    }));
+  } catch (err) {
+    console.error('[TTS] Error:', err.message);
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: err.message }));
+  }
 };

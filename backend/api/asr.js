@@ -59,6 +59,11 @@ function httpPost(hostname, path, headers, body) {
 module.exports = async function asrHandler(req, res) {
   console.log('[ASR] 收到请求:', req.method, 'URL:', req.url);
 
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.statusCode = 200; res.end(); return; }
   if (req.method !== 'POST') {
     res.statusCode = 405;
     res.setHeader('Content-Type', 'application/json');
