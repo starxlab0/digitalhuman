@@ -15,12 +15,18 @@ module.exports = async (req, res) => {
   if (req.method === 'OPTIONS') { res.statusCode = 200; res.end(); return; }
   if (req.method !== 'POST') { res.statusCode = 405; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Method Not Allowed' })); return; }
 
-  // Vercel Serverless 无 body parser，手动解析 JSON
+  // Vercel Serverless 无 body parser，用 chat.js 验证过的流式解析方式
   const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.from(chunk));
+  for await (const chunk of req) { chunks.push(chunk); }
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString());
+  } catch (e) {
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+    return;
   }
-  const body = JSON.parse(Buffer.concat(chunks).toString());
 
   const { text, lang } = body || {};
   if (!text || text.length === 0) {
