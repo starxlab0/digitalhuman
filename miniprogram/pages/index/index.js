@@ -23,7 +23,9 @@ Page({
     debugText: '',
     lang: 'zh-CN',
     langLabel: '粤',
-    canvasReady: false  // 控制组件延迟创建
+    canvasReady: false,  // 控制组件延迟创建
+    avatarMode: 'half',  // full | half | head
+    modeLabel: '半身',
   },
 
   _autoInterval: null,
@@ -261,14 +263,18 @@ Page({
 
       console.log('[Page] 最终回复:', reply, '表情:', expr);
 
-      if (expr && expr !== 'unknown') this._applyExpression(expr);
+      if (expr && expr !== 'unknown') this._applyExpression(expr, false);  // 只设表情，不播demo语音
       this._showBubble(reply);
 
-      // TTS 播报
-      VoiceManager.speak(reply,
-        () => { this._startMouthAnim(reply); },
-        () => { this._stopMouthAnim(); }
-      );
+      // TTS 播报（Viseme 口型驱动管线）
+      VoiceManager.speak(reply, {
+        onStart: () => { this._startMouthAnim(reply); },
+        onEnd: () => { this._stopMouthAnim(); },
+        onViseme: (visemeId) => {
+          const avatar = this._avatar();
+          if (avatar) avatar.setViseme(visemeId);
+        },
+      });
     };
 
     VoiceManager.startRecord(
@@ -338,6 +344,14 @@ Page({
       if (score > bestScore) { bestScore = score; best = expr; }
     }
     return bestScore > 0 ? best : 'unknown';
+  },
+
+  // ====== 视图模式切换 ======
+  toggleMode() {
+    const modes = ['full', 'half', 'head'];
+    const labels = ['全身', '半身', '头部'];
+    const idx = (modes.indexOf(this.data.avatarMode) + 1) % modes.length;
+    this.setData({ avatarMode: modes[idx], modeLabel: labels[idx] });
   },
 
   // ========== 语言切换 ==========

@@ -1,12 +1,12 @@
 /**
- * 微信小程序语音互动模块 (Vercel + 讯飞 ASR/TTS)
- * 
- * ASR: 录音 → PCM帧 → WAV → base64 → Vercel函数 → 讯飞语音听写 → 返回文本
- * TTS: 文本 → Vercel函数 → 讯飞语音合成 → 返回base64音频 → 写入本地播放
- * 
+ * 微信小程序语音互动模块
+ *
+ * ASR: 录音 → PCM帧 → WAV → Vercel后端 → Azure语音识别 → 返回文本
+ * TTS: 文本 → Vercel后端 → Azure Speech SDK(SSML+Viseme) → 音频+口型数据 → 本地播放
+ * LLM: 文本 → Vercel后端 → DeepSeek → 回复+表情标签
+ *
  * ---------- 配置 ----------
  * 部署 Vercel 后，将 proxyBase 改为你的域名。
- * 讯飞免费额度: 500次/日，可领5万次/90天免费包，支持粤语
  */
 
 const CONFIG = {
@@ -352,22 +352,26 @@ const VoiceManager = {
     this._sendASR(wavBase64);
   },
 
-  // ===================== TTS: Vercel → 讯飞 REST TTS → base64 → 播放 =====================
-  _doTTS(text, onStart, onEnd) {
+  // ===================== TTS: Vercel → Azure TTS + Viseme → base64 → 播放 =====================
+  /**
+   * @param {string} text
+   * @param {{ onStart?:Function, onEnd?:Function, onViseme?:Function }} callbacks
+   */
+  _doTTS(text, callbacks) {
+    const { onStart, onEnd, onViseme } = callbacks || {};
+
     wx.request({
       url: CONFIG.proxyBase + '/api/tts',
       method: 'POST',
       header: { 'Content-Type': 'application/json' },
-      data: {
-        text,
-        lang: CONFIG._lang,
-      },
+      data: { text, lang: CONFIG._lang },
+      timeout: 25000,
       success: (res) => {
         const json = res.data;
         if (json.audio) {
           const audioBase64 = json.audio;
-          // WAV 格式
-          const ext = json.format === 'audio/wav' ? 'wav' : 'mp3';
+          const visemes = json.visemes || [];
+          const ext = (json.contentType || '').includes('wav') ? 'wav' : 'mp3';
           const tmpPath = `${wx.env.USER_DATA_PATH}/tts_${Date.now()}.${ext}`;
 
           const fs = wx.getFileSystemManager();
@@ -376,7 +380,7 @@ const VoiceManager = {
             data: audioBase64,
             encoding: 'base64',
             success: () => {
-              this._playAudio(tmpPath, onStart, onEnd);
+              this._playAudio(tmpPath, visemes, callbacks);
             },
             fail: (e) => {
               console.error('[Voice] 写入音频文件失败:', e);
@@ -395,25 +399,63 @@ const VoiceManager = {
     });
   },
 
-  // ===================== 音频播放 =====================
-  _playAudio(src, onStart, onEnd) {
+  // ===================== 音频播放 + Viseme 口型驱动 =====================
+  /**
+   * @param {string} src - 本地音频文件路径
+   * @param {Array<{timeMs:number, visemeId:number}>} visemes
+   * @param {{ onStart?:Function, onEnd?:Function, onViseme?:Function }} callbacks
+   */
+  _playAudio(src, visemes, callbacks) {
+    const { onStart, onEnd, onViseme } = callbacks || {};
+
     this.stopSpeak();
     this._audioCtx = wx.createInnerAudioContext();
     this._audioCtx.src = src;
     this._speaking = true;
+
+    // 启动 viseme 轮询（16ms = ~60fps）
+    let _visemeIdx = 0;
+    let _visemeInterval = null;
+    const visemeCount = visemes.length;
+
+    if (visemeCount > 0 && onViseme) {
+      _visemeInterval = setInterval(() => {
+        try {
+          const tMs = (this._audioCtx.currentTime || 0) * 1000; // 秒→毫秒
+
+          // 二分查找当前时间对应的 viseme
+          let lo = _visemeIdx, hi = visemeCount;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (visemes[mid].timeMs <= tMs) lo = mid + 1;
+            else hi = mid;
+          }
+          const newIdx = lo > 0 ? lo - 1 : 0;
+          if (newIdx !== _visemeIdx) {
+            _visemeIdx = newIdx;
+            onViseme(visemes[_visemeIdx].visemeId);
+          }
+        } catch (e) { /* 忽略轮询异常 */ }
+      }, 16);
+    }
+
     if (onStart) this._audioCtx.onPlay(() => onStart());
-    this._audioCtx.onEnded(() => {
+
+    const cleanup = () => {
       this._speaking = false;
-      this._audioCtx.destroy();
-      this._audioCtx = null;
+      if (_visemeInterval) { clearInterval(_visemeInterval); _visemeInterval = null; }
+      if (onViseme) onViseme(0); // 闭嘴
+      if (this._audioCtx) {
+        this._audioCtx.destroy();
+        this._audioCtx = null;
+      }
       if (onEnd) onEnd();
-    });
+    };
+
+    this._audioCtx.onEnded(() => cleanup());
     this._audioCtx.onError((e) => {
       console.warn('[Voice] 音频播放失败:', e);
-      this._speaking = false;
-      this._audioCtx.destroy();
-      this._audioCtx = null;
-      if (onEnd) onEnd();
+      cleanup();
     });
     this._audioCtx.play();
   },
@@ -479,14 +521,24 @@ const VoiceManager = {
     }
   },
 
-  /** 文字合成语音并播放 (讯飞 TTS → Vercel 中继 → base64 音频) */
-  speak(text, onStart, onEnd) {
+  /**
+   * 文字合成语音并播放 (Azure TTS + Viseme 口型数据)
+   * @param {string} text
+   * @param {{ onStart?:Function, onEnd?:Function, onViseme?:(visemeId:number)=>void }} callbacks
+   */
+  speak(text, callbacks) {
     if (typeof wx.createInnerAudioContext !== 'function') {
       console.warn('[Voice] 当前环境不支持 TTS 播放');
-      if (onEnd) onEnd();
+      const cb = callbacks?.onEnd || callbacks;
+      if (cb) cb();
       return;
     }
-    this._doTTS(text, onStart, onEnd);
+    // 兼容旧版 (text, onStart, onEnd) 调用
+    if (typeof callbacks === 'function') {
+      this._doTTS(text, { onStart: arguments[1], onEnd: arguments[2] });
+    } else {
+      this._doTTS(text, callbacks || {});
+    }
   },
 
   /** 停止当前播放 */

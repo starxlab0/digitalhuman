@@ -1,190 +1,272 @@
 /**
- * 数字人 Canvas 自定义组件
- * 独立渲染作用域，避免页面 setData 触发 Canvas 2D 的 _getData 错误
+ * avatar-canvas 组件 — Live2D WebGL 数字人渲染
+ *
+ * 对外 API：
+ *   setExpression(name) / setViseme(id) / startSpeaking(text) / stopSpeaking()
+ *   setPupilTarget(x,y) / toggleSleep()
  */
-const FaceRenderer = require('../../utils/face-renderer');
+console.log('[avatar-canvas] file loaded');
+
+let Live2dRenderer = null;
+
+// Viseme → 嘴型参数映射
+const VISEME_MOUTH = {
+  0: 0.00, 1: 0.45, 2: 0.95, 3: 0.70, 4: 0.30,
+  5: 0.35, 6: 0.12, 7: 0.22, 8: 0.50, 9: 0.60,
+  10: 0.55, 11: 0.75, 12: 0.18, 13: 0.28, 14: 0.12,
+  15: 0.08, 16: 0.08, 17: 0.12, 18: 0.12, 19: 0.06,
+  20: 0.08, 21: 0.03, 22: 0.00,
+};
+
+// 显示模式配置（移出 methods，微信 methods 只能放函数）
+// ty 为负时，模型在视野中向上移动，可显示更高部位
+const AVATAR_MODES = {
+  full: { scale: 1.0,  ty:  0.0  },
+  half: { scale: 1.6,  ty: -0.35 },
+  head: { scale: 2.4,  ty: -0.65 },
+};
 
 Component({
-  properties: {},
+  properties: {
+    width:  { type: Number, value: 300 },
+    height: { type: Number, value: 300 },
+    // 显示模式: 'full' 全身 | 'half' 半身 | 'head' 头部
+    mode:   { type: String, value: 'half', observer: '_onModeChanged' },
+  },
 
   data: {
-    _inited: false,
-    _renderer: null,
-    _canvas: null,
-    _ctx: null,
-    _dpr: 1,
-    _lastTime: 0,
-    _rafId: 0,
-    _sleeping: false,
-    _touchMode: false,
-    _canvasW: 300,
-    _canvasH: 350,
-    _isSpeaking: false,
-    _mouthTimer: null,
+    _initialized: false,
+    statusText: '数字人加载中...',
   },
 
   lifetimes: {
+    created() {
+      console.log('[avatar-canvas] created');
+    },
+    attached() {
+      console.log('[avatar-canvas] attached');
+    },
     ready() {
-      // ready 生命周期在组件布局完成后触发，此时 DOM 完全就绪
-      // 延迟确保渲染层稳定
-      setTimeout(() => this._initCanvas(), 300);
+      console.log('[avatar-canvas] ready');
+      this._initLive2D();
     },
     detached() {
       this._stopLoop();
-      if (this._mouthTimer) clearInterval(this._mouthTimer);
+      if (Live2dRenderer) Live2dRenderer.destroy();
     },
-  },
-
-  pageLifetimes: {
-    show() { this._startLoop(); },
-    hide() { this._stopLoop(); },
   },
 
   methods: {
-    // ========== Canvas 初始化 ==========
-    _initCanvas() {
-      if (this.data._inited) return;
-      const query = this.createSelectorQuery();
-      query.select('#faceCanvas')
-        .fields({ node: true, size: true })
-        .exec((res) => {
-          if (!res || !res[0] || !res[0].node) {
-            console.warn('[Avatar] Canvas 2D 不可用');
-            return;
-          }
-          const canvas = res[0].node;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            console.warn('[Avatar] getContext 失败');
-            return;
-          }
-          const dpr = (wx.getWindowInfo ? wx.getWindowInfo().pixelRatio : null) || 1;
-          canvas.width = this.data._canvasW * dpr;
-          canvas.height = this.data._canvasH * dpr;
-          ctx.scale(dpr, dpr);
-
-          this.data._canvas = canvas;
-          this.data._ctx = ctx;
-          this.data._dpr = dpr;
-          this.data._renderer = new FaceRenderer(canvas, ctx, dpr);
-          this.data._lastTime = Date.now();
-          this.data._inited = true;
-
-          // 再延迟启动动画循环，确保渲染层完成首次绘制
-          setTimeout(() => this._startLoop(), 100);
-          console.log('[Avatar] Canvas 2D 初始化成功');
-        });
+    // ====== 私有 ======
+    _setStatus(text) {
+      console.log('[avatar-canvas] status →', text);
+      this.setData({ statusText: text });
     },
 
-    // ========== 动画循环 ==========
-    // 注意：使用 setTimeout 而非 canvas.requestAnimationFrame，
-    // 避免 Canvas 2D RAF 与微信渲染层交互触发 _getData 错误
+    _initLive2D() {
+      console.log('[avatar-canvas] _initLive2D called, _initialized=', this.data._initialized);
+      if (this.data._initialized) return;
+
+      if (!Live2dRenderer) {
+        try {
+          Live2dRenderer = require('../../utils/live2d-renderer');
+          console.log('[avatar-canvas] Live2dRenderer loaded');
+        } catch (e) {
+          console.error('[avatar-canvas] Live2dRenderer require FAILED:', e);
+          this._setStatus('Live2D 模块加载失败');
+          this._drawFallback();
+          return;
+        }
+      }
+
+      // 应用显示模式
+      this._applyMode(this.properties.mode);
+
+      this._setStatus('初始化画布...');
+
+      const query = this.createSelectorQuery();
+      query.select('#live2dCanvas').node((res) => {
+        console.log('[avatar-canvas] canvas query result:', !!res, !!(res && res.node));
+        if (!res || !res.node) {
+          console.error('[avatar-canvas] canvas node not found');
+          this._setStatus('画布未找到，重试...');
+          this._drawFallback();
+          return;
+        }
+
+        const canvas = res.node;
+        const dpr = wx.getWindowInfo().pixelRatio || 1;
+        const cssW = Math.max(this.properties.width, 360);
+        const cssH = Math.max(this.properties.height, 480);
+        canvas.width  = Math.min(Math.floor(cssW * dpr), 1024);
+        canvas.height = Math.min(Math.floor(cssH * dpr), 1280);
+        this._cssWidth = cssW;
+        this._cssHeight = cssH;
+
+        this._setStatus('启动 Live2D 核心...');
+
+        const hangTimer = setTimeout(() => {
+          console.warn('[avatar-canvas] init hang >15s');
+          this._setStatus('核心初始化超时');
+        }, 15000);
+
+        setTimeout(() => {
+          try {
+            console.log('[avatar-canvas] calling Live2dRenderer.init');
+            Live2dRenderer.init(canvas);
+            console.log('[avatar-canvas] Live2dRenderer.init returned');
+            clearTimeout(hangTimer);
+            this._canvas = canvas;
+            this.setData({ _initialized: true });
+            this._setStatus('加载模型...');
+            this._startLoop();
+            this._waitModelReady(0);
+          } catch (err) {
+            clearTimeout(hangTimer);
+            console.error('[avatar-canvas] Live2D init ERROR:', err);
+            this._setStatus('加载失败：' + (err && err.message ? err.message : '未知错误'));
+            this._drawFallback();
+          }
+        }, 50);
+      }).exec();
+    },
+
+    /**
+     * 降级渲染：在 canvas 上画一个简单图案证明 canvas 工作正常
+     */
+    _drawFallback() {
+      console.log('[avatar-canvas] _drawFallback');
+      const query = this.createSelectorQuery();
+      query.select('#live2dCanvas').node((res) => {
+        if (!res || !res.node) {
+          console.error('[avatar-canvas] fallback canvas not found');
+          this._setStatus('画布节点不存在');
+          return;
+        }
+        const canvas = res.node;
+        const dpr = 2;
+        canvas.width  = 360 * dpr;
+        canvas.height = 480 * dpr;
+        try {
+          const gl = canvas.getContext('webgl');
+          if (!gl) {
+            console.error('[avatar-canvas] no webgl context');
+            this._setStatus('不支持 WebGL');
+            return;
+          }
+          gl.clearColor(0.15, 0.15, 0.2, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          console.log('[avatar-canvas] fallback render: webgl clear done');
+        } catch (e) {
+          console.error('[avatar-canvas] fallback render error:', e);
+          this._setStatus('Canvas 渲染失败');
+        }
+      }).exec();
+    },
+
+    _waitModelReady(retries) {
+      retries = retries || 0;
+      if (retries > 80) {
+        this._setStatus('模型加载超时');
+        return;
+      }
+      if (Live2dRenderer && Live2dRenderer.isReady()) {
+        this._setStatus('');
+        console.log('[avatar-canvas] model ready');
+        return;
+      }
+      setTimeout(() => this._waitModelReady(retries + 1), 100);
+    },
+
+    // ====== 渲染循环 ======
     _startLoop() {
-      if (!this.data._renderer || this.data._rafId) return;
-      this.data._lastTime = Date.now();
-      const renderer = this.data._renderer;
-      const self = this;
+      if (this._rafId) return;
+      const canvas = this._canvas;
+      const rAF = (canvas && canvas.requestAnimationFrame) || requestAnimationFrame;
+      const cAF = (canvas && canvas.cancelAnimationFrame) || cancelAnimationFrame;
+      this._rAF = rAF;
+      this._cAF = cAF;
 
       const loop = () => {
-        if (!self.data._renderer) return;
-        try {
-          const now = Date.now();
-          const dt = (now - self.data._lastTime) / 1000;
-          self.data._lastTime = now;
-          renderer.update(dt);
-          renderer.render();
-        } catch (e) {
-          console.error('[Avatar] 渲染异常:', e);
-        }
-        self.data._rafId = setTimeout(loop, 16);
+        if (Live2dRenderer) Live2dRenderer.render();
+        this._rafId = rAF(loop);
       };
-
-      this.data._rafId = setTimeout(loop, 16);
+      this._rafId = rAF(loop);
     },
 
     _stopLoop() {
-      if (this.data._rafId) {
-        clearTimeout(this.data._rafId);
-        this.data._rafId = 0;
+      if (this._rafId && this._rAF) {
+        (this._cAF || cancelAnimationFrame)(this._rafId);
+        this._rafId = null;
       }
     },
 
-    // ========== 对外方法 ==========
-    setExpression(expr) {
-      const r = this.data._renderer;
-      if (!r) return;
-      if (expr === 'sleepy') {
-        this.data._sleeping = true;
-      } else if (this.data._sleeping) {
-        this.data._sleeping = false;
+    // ====== 显示模式 ======
+    _applyMode(mode) {
+      const cfg = AVATAR_MODES[mode] || AVATAR_MODES.half;
+      try {
+        const LAppDefine = require('../../utils/live2d/lappdefine');
+        LAppDefine.scale1 = cfg.scale;
+        LAppDefine.translate1 = { x: 0, y: cfg.ty };
+        console.log('[avatar-canvas] mode:', mode, 'scale=', cfg.scale, 'ty=', cfg.ty);
+      } catch (e) {
+        console.warn('[avatar-canvas] LAppDefine not available yet, will retry');
       }
-      r.setExpression(expr);
+    },
+
+    _onModeChanged(newVal) {
+      if (this.data._initialized) {
+        // 运行时切换：下次 onUpdate 会生效
+        this._applyMode(newVal);
+      }
+    },
+
+    // ====== 触摸 ======
+    onTouchStart(e) {
+      const t = e.touches[0];
+      if (t && Live2dRenderer) Live2dRenderer.touchBegan(t.x, t.y);
+    },
+    onTouchMove(e) {
+      const t = e.touches[0];
+      if (t && Live2dRenderer) Live2dRenderer.touchMoved(t.x, t.y);
+    },
+    onTouchEnd(e) {
+      const t = e.changedTouches[0];
+      if (t && Live2dRenderer) Live2dRenderer.touchEnded(t.x, t.y);
+    },
+
+    // ====== 公开 API ======
+    setExpression(name) {
+      if (Live2dRenderer) Live2dRenderer.setExpression(name);
+    },
+
+    setViseme(visemeId) {
+      const open = VISEME_MOUTH[visemeId] || 0;
+      if (Live2dRenderer) Live2dRenderer.setMouthOpen(open);
     },
 
     setPupilTarget(x, y) {
-      const r = this.data._renderer;
-      if (r) r.setPupilTarget(x, y);
+      if (Live2dRenderer) Live2dRenderer.setEyeTarget(x, y);
     },
 
-    resetPupil() {
-      const r = this.data._renderer;
-      if (r) r.setPupilTarget(0, 0);
-    },
-
-    startSpeaking(text) {
-      const r = this.data._renderer;
-      if (!r || this.data._isSpeaking) return;
-      this.data._isSpeaking = true;
-      r.startSpeaking(text);
+    startSpeaking() {
+      this.setExpression('surprised');
     },
 
     stopSpeaking() {
-      this.data._isSpeaking = false;
-      const r = this.data._renderer;
-      if (r) r.stopSpeaking();
+      this.setExpression('neutral');
+      if (Live2dRenderer) Live2dRenderer.setMouthOpen(0);
+    },
+
+    toggleSleep() {
+      this._sleeping = !this._sleeping;
+      if (this._sleeping && Live2dRenderer) {
+        Live2dRenderer.setExpression('neutral');
+      }
     },
 
     isSleeping() {
-      return this.data._sleeping;
-    },
-
-    // ========== 触摸事件（透传给页面） ==========
-    onTouchStart(e) {
-      this.data._touchMode = true;
-      this._updatePupil(e);
-      this.triggerEvent('touchstart', e.detail);
-    },
-
-    onTouchMove(e) {
-      this._updatePupil(e);
-    },
-
-    onTouchEnd() {
-      this.data._touchMode = false;
-      const r = this.data._renderer;
-      if (r) r.setPupilTarget(0, 0);
-    },
-
-    onTap() {
-      this.triggerEvent('tap');
-    },
-
-    _updatePupil(e) {
-      const r = this.data._renderer;
-      if (!r || this.data._sleeping) return;
-      const touch = e.touches && e.touches[0];
-      if (!touch) return;
-
-      const query = this.createSelectorQuery();
-      query.select('#faceCanvas').boundingClientRect((rect) => {
-        if (!rect) return;
-        const nx = ((touch.clientX - rect.left) / rect.width - 0.5) * 2;
-        const ny = ((touch.clientY - rect.top) / rect.height - 0.5) * 2;
-        r.setPupilTarget(
-          Math.max(-1, Math.min(1, nx)),
-          Math.max(-1, Math.min(1, ny))
-        );
-      }).exec();
+      return !!this._sleeping;
     },
   },
 });

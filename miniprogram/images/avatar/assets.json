@@ -1,0 +1,17 @@
+{
+  "version": "2.0",
+  "description": "数字人面部表情资产清单。以 base.jpg 为角色参考生成，所有表情共享同一角色设计，确保画风一致。",
+  "base": "base.jpg",
+  "expressions": {
+    "neutral": "expressions/neutral.jpg",
+    "happy": "expressions/happy.jpg",
+    "sad": "expressions/sad.jpg",
+    "surprised": "expressions/surprised.jpg",
+    "angry": "expressions/angry.jpg",
+    "love": "expressions/love.jpg"
+  },
+  "useMouthOverlays": false,
+  "mouths": {},
+  "visemeMap": {},
+  "note": "嘴型已改为程序化绘制（Viseme 驱动），不再使用 image overlay。如需恢复，将 useMouthOverlays 设为 true 并填充 mouths/visemeMap。"
+}

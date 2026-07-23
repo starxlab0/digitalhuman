@@ -11,6 +11,7 @@
     <!-- Canvas 面部渲染（独立组件，避免 _getData 错误） -->
     <avatar-canvas
       wx:if="{{canvasReady}}"
+      mode="{{avatarMode}}"
       id="avatar"
       bindtouchstart="onAvatarTouchStart"
       bindtap="onAvatarTap"
@@ -46,6 +47,10 @@
       <view class="action-btn {{lang==='zh-HK'?'on':''}}" bindtap="toggleLang">
         <text class="icon">{{lang==='zh-HK' ? '🇭🇰' : '🇨🇳'}}</text>
         <text class="label">{{langLabel}}</text>
+      </view>
+      <view class="action-btn" bindtap="toggleMode">
+        <text class="icon">🎭</text>
+        <text class="label">{{modeLabel}}</text>
       </view>
     </view>
   </view>

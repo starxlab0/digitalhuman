@@ -1,9 +1,15 @@
-<canvas
-  type="2d"
-  id="faceCanvas"
-  class="face-canvas"
-  bindtouchstart="onTouchStart"
-  bindtouchmove="onTouchMove"
-  bindtouchend="onTouchEnd"
-  bindtap="onTap"
-></canvas>
+<!-- Live2D 数字人 WebGL 画布 -->
+<view class="avatar-wrap">
+  <canvas
+    type="webgl"
+    canvas-id="live2dCanvas"
+    id="live2dCanvas"
+    class="avatar-canvas"
+    style="width:100%;height:100%"
+    bindtouchstart="onTouchStart"
+    bindtouchmove="onTouchMove"
+    bindtouchend="onTouchEnd"
+    disable-scroll
+  />
+  <view class="avatar-status" wx:if="{{statusText}}">{{statusText}}</view>
+</view>

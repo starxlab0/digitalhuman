@@ -1,255 +1,223 @@
 /**
- * 数字人面部渲染引擎 - 完整表情图片版
- * 使用多张完整表情头像按表情切换，配合呼吸、眨眼、头部微动等动画。
+ * 数字人面部渲染引擎 v5 — 表情图切换
+ *
+ * 资产结构：
+ *   images/avatar/
+ *   ├── base.jpg                           默认底图
+ *   ├── expressions/{neutral,happy,...}.jpg  表情图
+ *   └── assets.json                        资产清单
+ *
+ * 渲染管线：
+ *   1) 绘制当前表情图（表情切换透明度淡入淡出）
+ *   2) 说话时自动切到 surprised 张嘴表情，说完恢复
+ *
+ * 更换设计：替换 images/avatar/ 下图片即可。
  */
 
-const IMG_BASE = '/images';
-
-// 表情图片映射：完整 210x210 头像
-const AVATAR_PATHS = {
-  neutral:   IMG_BASE + '/avatar.png',
-  happy:     IMG_BASE + '/avatar_happy.png',
-  sad:       IMG_BASE + '/avatar_sad.png',
-  surprised: IMG_BASE + '/avatar_surprised.png',
-  angry:     IMG_BASE + '/avatar_angry.png',
-  wink:      IMG_BASE + '/avatar_wink.png',
-  blink:     IMG_BASE + '/avatar_blink.png',
-};
-
-const SRC_W = 210;
-const SRC_H = 210;
+const ASSET_BASE = '/images/avatar/';
+let ASSET_MANIFEST = null;
+try {
+  ASSET_MANIFEST = require('../images/avatar/assets.json');
+} catch (e) {
+  console.warn('[Face] assets.json 读取失败，将使用 fallback');
+}
 
 class FaceRenderer {
   constructor(canvas, ctx, dpr) {
     this.canvas = canvas;
     this.ctx = ctx;
     this.dpr = dpr;
-    this.w = canvas.width / dpr;   // CSS 像素宽
-    this.h = canvas.height / dpr;  // CSS 像素高
+    this.w = canvas.width / dpr;
+    this.h = canvas.height / dpr;
+    this.scale = Math.min(this.w / 210, this.h / 210);
+    this.offX = (this.w - 210 * this.scale) / 2;
+    this.offY = (this.h - 210 * this.scale) / 2;
 
-    // 缩放：把 210x210 图片适配到画布
-    this.scale = Math.min(this.w / SRC_W, this.h / SRC_H);
-    this.offX = (this.w - SRC_W * this.scale) / 2;
-    this.offY = (this.h - SRC_H * this.scale) / 2;
+    this._manifest = ASSET_MANIFEST || {
+      base: 'base.jpg',
+      expressions: { neutral: 'base.jpg' },
+    };
+    this._baseImg = null;
+    this._exprImgs = {};
+    this._loadedCount = 0;
+    this._totalCount = 0;
+    this._ready = false;
 
-    // 图片缓存：key -> Image
-    this.imgs = {};
-    this.ready = false;
-
-    // ---- 动画状态 ----
-    this.time = 0;
-    this.breathPhase = 0;
-
-    // 头部弹簧物理
-    this.headX = 0; this.headVX = 0;
-    this.headY = 0; this.headVY = 0;
-    this.headTilt = 0; this.headTiltV = 0;
-    this.targetHeadX = 0;
-    this.targetHeadY = 0;
-    this.targetHeadTilt = 0;
-
-    // 眨眼
-    this.eyeOpen = true;
-    this.blinkTimer = 0;
-    this.nextBlink = 2000 + Math.random() * 3000;
-    this.isBlinking = false;
-    this.blinkHoldStart = null;
-
-    // 表情
+    // 表情状态
     this.currentExpr = 'neutral';
+    this._prevExpr = 'neutral';
+    this._exprAlpha = 1;
+    this._exprTransition = 0;
 
-    // 空闲微动
-    this.idleTimer = 0;
-    this.idleInterval = 3000 + Math.random() * 2000;
-
-    // 说话
+    // 说话状态
     this.isSpeaking = false;
-    this.speakTime = 0;
-    this.speakDuration = 0;
-    this.speakNodPhase = 0;
-    this.mouthPhase = 0;
-    this.mouthOpen = 0;
-    this._nextSpeakRate = null;
+    this._speakT = 0;
+    this._speakDur = 0;
+    this._savedExpr = null;
 
-    // 开始加载图片
-    this._loadAll(canvas);
+    // 动画
+    this._time = 0;
+    this._breathPhase = 0;
+    this._nodPhase = 0;
+
+    // 弹簧物理
+    this._hx = 0; this._hvx = 0;
+    this._hy = 0; this._hvy = 0;
+    this._ht = 0; this._hvt = 0;
+    this._thx = 0; this._thy = 0; this._tht = 0;
+
+    this._loadAssets();
   }
 
-  // ==================== 图片加载 ====================
-  _loadOne(canvas, src) {
-    return new Promise((resolve) => {
-      try {
-        const img = canvas.createImage();
-        img.onload = () => resolve(img);
-        img.onerror = (e) => { console.warn('[Face] 图片加载失败:', src, e); resolve(null); };
-        img.src = src;
-      } catch (e) {
-        console.warn('[Face] createImage 失败:', src, e);
-        resolve(null);
-      }
+  _loadAssets() {
+    const m = this._manifest;
+    const tasks = [];
+
+    // base
+    tasks.push({ key: 'base', url: ASSET_BASE + m.base, type: 'base' });
+
+    // expressions
+    Object.keys(m.expressions || {}).forEach((name) => {
+      tasks.push({ key: name, url: ASSET_BASE + m.expressions[name], type: 'expr' });
+    });
+
+    this._totalCount = tasks.length;
+    if (this._totalCount === 0) {
+      this._ready = true;
+      return;
+    }
+
+    tasks.forEach((t) => {
+      const img = this.canvas.createImage();
+      img.onload = () => {
+        if (t.type === 'base') this._baseImg = img;
+        if (t.type === 'expr') this._exprImgs[t.key] = img;
+        this._loadedCount++;
+        if (this._loadedCount >= this._totalCount) {
+          this._ready = true;
+          console.log('[Face] 全部分层资产加载完成');
+        }
+      };
+      img.onerror = () => {
+        console.warn('[Face] 资产加载失败:', t.url);
+        this._loadedCount++;
+        if (this._loadedCount >= this._totalCount) this._ready = true;
+      };
+      img.src = t.url;
     });
   }
 
-  async _loadAll(canvas) {
-    console.log('[Face] 开始加载表情图片...');
-    const tasks = [];
-    for (const [key, src] of Object.entries(AVATAR_PATHS)) {
-      tasks.push(
-        this._loadOne(canvas, src).then(img => { this.imgs[key] = img; })
-      );
-    }
-
-    await Promise.all(tasks);
-    this.ready = true;
-    console.log('[Face] 所有表情图片加载完成');
-  }
-
-  // ==================== 物理更新 ====================
   update(dt) {
-    if (!this.ready) return;
+    if (!this._ready) return;
     if (dt > 0.1) dt = 0.1;
-    this.time += dt;
+    this._time += dt;
 
-    const k = 8, damp = 12;
-    const ax = (this.targetHeadX - this.headX) * k - this.headVX * damp;
-    const ay = (this.targetHeadY - this.headY) * k - this.headVY * damp;
-    const at = (this.targetHeadTilt - this.headTilt) * k - this.headTiltV * damp;
-    this.headVX += ax * dt;
-    this.headVY += ay * dt;
-    this.headTiltV += at * dt;
-    this.headX += this.headVX * dt;
-    this.headY += this.headVY * dt;
-    this.headTilt += this.headTiltV * dt;
-
-    // 眨眼
-    this.blinkTimer += dt * 1000;
-    if (!this.isBlinking && this.blinkTimer >= this.nextBlink) {
-      this._startBlink();
-    }
-    if (this.isBlinking) this._updateBlink(dt);
+    // 弹簧物理
+    const k = 8, d = 12;
+    this._hvx += ((this._thx - this._hx) * k - this._hvx * d) * dt;
+    this._hvy += ((this._thy - this._hy) * k - this._hvy * d) * dt;
+    this._hvt += ((this._tht - this._ht) * k - this._hvt * d) * dt;
+    this._hx += this._hvx * dt;
+    this._hy += this._hvy * dt;
+    this._ht += this._hvt * dt;
 
     // 空闲微动
     if (!this.isSpeaking) {
-      this.idleTimer += dt * 1000;
-      if (this.idleTimer >= this.idleInterval) {
-        this.idleTimer = 0;
-        this.idleInterval = 2500 + Math.random() * 3500;
-        this.targetHeadX = (Math.random() - 0.5) * 1.2;
-        this.targetHeadY = (Math.random() - 0.5) * 0.6;
-        this.targetHeadTilt = (Math.random() - 0.5) * 2.5;
+      this._idleT = (this._idleT || 0) + dt * 1000;
+      if (this._idleT >= (this._idleIvl || 0)) {
+        this._idleT = 0;
+        this._idleIvl = 2500 + Math.random() * 3500;
+        this._thx = (Math.random() - 0.5) * 1.2;
+        this._thy = (Math.random() - 0.5) * 0.6;
+        this._tht = (Math.random() - 0.5) * 2.5;
       }
-      if (!this.isBlinking && Math.abs(this.targetHeadX) < 0.02 && Math.abs(this.targetHeadY) < 0.02) {
-        this.targetHeadX += (Math.random() - 0.5) * 0.08;
-        this.targetHeadY += (Math.random() - 0.5) * 0.06;
-        this.targetHeadTilt += (Math.random() - 0.5) * 0.5;
+      if (Math.abs(this._thx) < 0.02 && Math.abs(this._thy) < 0.02) {
+        this._thx += (Math.random() - 0.5) * 0.08;
+        this._thy += (Math.random() - 0.5) * 0.06;
+        this._tht += (Math.random() - 0.5) * 0.5;
       }
     }
 
-    // 说话动画：点头 + 嘴部张合模拟（音节节奏）
+    // 表情淡入淡出 (~170ms)
+    if (this._exprTransition > 0) {
+      this._exprTransition -= dt * 6;
+      if (this._exprTransition <= 0) {
+        this._exprTransition = 0;
+        this._prevExpr = this.currentExpr;
+        this._exprAlpha = 1;
+      } else {
+        this._exprAlpha = 1 - this._exprTransition;
+      }
+    }
+
+    // 说话时点头动画
     if (this.isSpeaking) {
-      this.speakTime += dt * 1000;
-
-      // 嘴部张合：5.5Hz 音节频率 + 随机微调
-      if (!this._nextSpeakRate) {
-        this._nextSpeakRate = 4.5 + Math.random() * 2.5; // 4.5~7Hz 模拟不同音节
-      }
-      this.mouthPhase += dt * this._nextSpeakRate * Math.PI * 2;
-      if (this.mouthPhase > Math.PI * 2) {
-        this.mouthPhase -= Math.PI * 2;
-        this._nextSpeakRate = 4.5 + Math.random() * 2.5; // 每个周期换频率
-      }
-      // mouthOpen: 0~0.06 的 Y 轴拉伸
-      this.mouthOpen = (Math.abs(Math.sin(this.mouthPhase)) * 0.05 +
-                        Math.abs(Math.sin(this.mouthPhase * 0.3)) * 0.01);
-
-      // 头部点头
-      this.speakNodPhase += dt * 5.5;
-      this.targetHeadY = -0.5 + Math.sin(this.speakNodPhase) * 0.4;
-      this.targetHeadX = Math.sin(this.speakNodPhase * 0.7) * 0.25;
-
-      if (this.speakTime > this.speakDuration) {
-        this.isSpeaking = false;
-        this.mouthOpen = 0;
-        this._nextSpeakRate = null;
-        this.targetHeadY += (0 - this.targetHeadY) * 3 * dt;
-        this.targetHeadX += (0 - this.targetHeadX) * 3 * dt;
+      this._speakT += dt * 1000;
+      this._nodPhase += dt * 5.5;
+      this._thy = -0.5 + Math.sin(this._nodPhase) * 0.4;
+      this._thx = Math.sin(this._nodPhase * 0.7) * 0.25;
+      if (this._speakT > this._speakDur) {
+        this.stopSpeaking(); // 超时自动闭嘴 + 恢复表情
       }
     }
 
     // 呼吸
-    this.breathPhase += dt * 0.8;
+    this._breathPhase += dt * 0.8;
   }
 
-  _startBlink() {
-    this.isBlinking = true;
-    this.eyeOpen = false;
-    this.blinkHoldStart = null;
-  }
-
-  _updateBlink(dt) {
-    if (!this.eyeOpen) {
-      if (!this.blinkHoldStart) this.blinkHoldStart = this.time;
-      if (this.time - this.blinkHoldStart > 0.12) {
-        this.eyeOpen = true;
-      }
-    } else {
-      this.isBlinking = false;
-      this.blinkHoldStart = null;
-      this.blinkTimer = 0;
-      this.nextBlink = 2000 + Math.random() * 3000;
-    }
-  }
-
-  // ==================== 公开 API ====================
-
-  /** 设置表情 */
   setExpression(expr) {
     if (this.currentExpr === expr) return;
-    // 如果没有对应图片，回退到 neutral
-    if (!AVATAR_PATHS[expr]) {
-      // 映射特殊表情
-      if (expr === 'sleepy') {
-        this.currentExpr = 'sleepy';  // 状态记录，图片用 blink
-      } else {
-        this.currentExpr = 'neutral';
-      }
+    if (!this._manifest || !this._manifest.expressions[expr]) {
+      console.warn('[Face] 未知表情:', expr);
       return;
     }
+    this._prevExpr = this.currentExpr;
     this.currentExpr = expr;
+    this._exprTransition = 1;
+    this._exprAlpha = 0;
   }
 
-  /** 瞳孔跟踪（图片版保留接口兼容） */
-  setPupilTarget(nx, ny) {
-    // 图片版不追踪瞳孔，保持接口兼容
-  }
+  setPupilTarget() { /* 保留兼容 */ }
 
-  /** 头部目标 */
   setHeadTarget(hx, hy, ht) {
-    this.targetHeadX = hx;
-    this.targetHeadY = hy;
-    this.targetHeadTilt = ht;
+    this._thx = hx;
+    this._thy = hy;
+    this._tht = ht;
   }
 
-  /** 开始说话 */
   startSpeaking(text) {
+    if (this.isSpeaking) return;
+    this._savedExpr = this.currentExpr;     // 记下说话前的表情
     this.isSpeaking = true;
-    this.speakTime = 0;
-    this.speakDuration = (text || '').length * 70 + 200; // ~70ms per char
-    this.speakNodPhase = 0;
+    this._speakT = 0;
+    this._speakDur = (text || '').length * 70 + 200;
+    this._nodPhase = 0;
+    // 切到张嘴表情（surprised 嘴张最大，近似说话效果）
+    this.setExpression('surprised');
   }
 
-  /** 停止说话 */
   stopSpeaking() {
+    if (!this.isSpeaking) return;
     this.isSpeaking = false;
+    // 恢复说话前的表情
+    const restore = this._savedExpr || 'neutral';
+    this.setExpression(restore);
   }
 
-  // ==================== 主渲染 ====================
+  setViseme(visemeId) {
+    // 表情图自带嘴型，不需要程序化嘴型绘制；
+    // 仅保留此接口兼容，不做额外处理
+  }
+
   render() {
-    if (!this.ready) {
-      // 还未加载完，画一个提示
-      const c = this.ctx;
-      c.fillStyle = '#FFFFFF';
-      c.fillRect(0, 0, this.w, this.h);
+    const c = this.ctx;
+    c.clearRect(0, 0, this.w, this.h);
+
+    // 背景
+    c.fillStyle = '#FFFFFF';
+    c.fillRect(0, 0, this.w, this.h);
+
+    if (!this._ready) {
       c.fillStyle = '#999';
       c.font = '14px sans-serif';
       c.textAlign = 'center';
@@ -258,51 +226,37 @@ class FaceRenderer {
       return;
     }
 
-    const c = this.ctx;
-    c.clearRect(0, 0, this.w, this.h);
+    const s = this.scale;
+    const ox = this.offX, oy = this.offY;
 
-    // 背景
-    c.fillStyle = '#FFFFFF';
-    c.fillRect(0, 0, this.w, this.h);
+    // 头部变换
+    const cx = this.w / 2 + this._hx * 4;
+    const cy = this.h * 0.4 + this._hy * 3;
+    const bs = 1 + Math.sin(this._breathPhase) * 0.01;
 
     c.save();
-
-    // 头部变换中心（在画布坐标中）
-    const cx = this.w / 2 + this.headX * 4;
-    const cy = this.h * 0.4 + this.headY * 3;
     c.translate(cx, cy);
-    c.rotate(this.headTilt * Math.PI / 180);
-    // 呼吸 + 口型 Y 轴张合
-    const breathScale = 1 + Math.sin(this.breathPhase) * 0.012;
-    const mouthSY = this.isSpeaking ? (1 + this.mouthOpen) : 1;
-    c.scale(breathScale, breathScale * mouthSY);
-    // 偏移回去，让坐标原点回到 0,0（模型空间）
+    c.rotate(this._ht * Math.PI / 180);
+    c.scale(bs, bs);
     c.translate(-cx, -cy);
 
-    // 选择当前要显示的完整头像
-    let imgKey = this.currentExpr;
+    // 表情底图
+    const drawExpr = (img, alpha) => {
+      if (!img) return;
+      c.save();
+      c.globalAlpha = alpha;
+      c.drawImage(img, ox, oy, 210 * s, 210 * s);
+      c.restore();
+    };
 
-    // sleepy 表情 → 闭眼
-    if (imgKey === 'sleepy') imgKey = 'blink';
+    const prevImg = this._exprImgs[this._prevExpr] || this._baseImg;
+    const curImg = this._exprImgs[this.currentExpr] || this._baseImg;
 
-    // 眨眼时优先显示闭眼图
-    if (!this.eyeOpen && this.imgs.blink && imgKey !== 'sleepy') {
-      imgKey = 'blink';
-    }
-
-    // 回退
-    if (!AVATAR_PATHS[imgKey] || !this.imgs[imgKey]) {
-      imgKey = 'neutral';
-    }
-
-    const img = this.imgs[imgKey];
-    if (img) {
-      const s = this.scale;
-      const dx = this.offX;
-      const dy = this.offY;
-      const dw = SRC_W * s;
-      const dh = SRC_H * s;
-      this.ctx.drawImage(img, dx, dy, dw, dh);
+    if (this._exprTransition > 0) {
+      drawExpr(prevImg, 1);
+      drawExpr(curImg, this._exprAlpha);
+    } else {
+      drawExpr(curImg, 1);
     }
 
     c.restore();
